@@ -1,12 +1,12 @@
 info:
   app:
-    name: SailPointServer
-    description: SailPoint Server
+    name: AttestationHubServer
+    description: AttestationHub Server
 server:
  port: 9090
  compression.enabled: true
  servlet:
-   context-path: /sailpointserver
+   context-path: /attestationhubserver
 
 springdoc:
    api-docs:
@@ -15,7 +15,7 @@ spring:
   profiles:
     active: local
   banner:
-    location: classpath:sailpointserver.txt
+    location: classpath:attestationhubserver.txt
   mvc:
     view:
       prefix: /WEB-INF/views/
@@ -29,9 +29,9 @@ spring:
       settings:
        web-allow-others: true
   datasource:
-    url: jdbc:h2:file:/data/sailpoint;DB_CLOSE_ON_EXIT=FALSE
-    username: sailpoint
-    password: sailpoint
+    url: jdbc:h2:file:/data/attestationhub;DB_CLOSE_ON_EXIT=FALSE
+    username: attestationhub
+    password: attestationhub
     driverClassName: org.h2.Driver
   jpa:
     show-sql: true

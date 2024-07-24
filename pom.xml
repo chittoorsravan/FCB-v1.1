@@ -8,12 +8,12 @@
 		<version>2.7.5</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
-	<groupId>com.svb.sailpoint.server</groupId>
-	<artifactId>sailpointserver</artifactId>
+	<groupId>com.attestationhub.sailpoint.server</groupId>
+	<artifactId>attestationhubserver</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<packaging>war</packaging>
-	<name>sailpointserver</name>
-	<description>SailPoint Server</description>
+	<name>attestationhubserver</name>
+	<description>AttestationHub Server</description>
 	<properties>
 		<java.version>1.8</java.version>
 		<springdoc.version>1.6.6</springdoc.version>
