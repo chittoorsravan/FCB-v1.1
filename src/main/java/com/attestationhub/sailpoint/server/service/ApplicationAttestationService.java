@@ -2,13 +2,17 @@ package com.attestationhub.sailpoint.server.service;
 
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.time.DateUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -16,14 +20,17 @@ import org.springframework.util.StringUtils;
 import com.attestationhub.sailpoint.server.dto.ResponseAttributes;
 import com.attestationhub.sailpoint.server.dto.SailpointRequest;
 import com.attestationhub.sailpoint.server.dto.SailpointResponse;
+import com.attestationhub.sailpoint.server.dto.SummaryResponseAttributes;
+import com.attestationhub.sailpoint.server.dto.SummaryResponseMap;
 import com.attestationhub.sailpoint.server.dto.WorkflowArgs;
 import com.attestationhub.sailpoint.server.entity.Application;
 import com.attestationhub.sailpoint.server.entity.SailpointUser;
+import com.attestationhub.sailpoint.server.exception.AttestationHubServerException;
 import com.attestationhub.sailpoint.server.exception.BadRequestException;
 import com.attestationhub.sailpoint.server.exception.NoDataFoundException;
-import com.attestationhub.sailpoint.server.exception.AttestationHubServerException;
 import com.attestationhub.sailpoint.server.repository.ApplicationRepository;
 import com.attestationhub.sailpoint.server.repository.SailpointUserRepository;
+import com.attestationhub.sailpoint.server.repository.UniqueIdRepository;
 import com.attestationhub.sailpoint.server.utils.ApplicationTypes;
 import com.attestationhub.sailpoint.server.utils.Attribute;
 import com.attestationhub.sailpoint.server.utils.RequestorTypes;
@@ -41,6 +48,9 @@ public class ApplicationAttestationService {
 	private SailpointUserRepository sailpointUserRepository;
 	
 	@Autowired
+	private UniqueIdRepository uniqueIdRepository;
+	
+	@Autowired
 	private ApplicationRepository applicationRepository;
 
 	public void saveAttestationDataFor(String username, String attestationName,Integer rows, Attribute attribute, ApplicationTypes applicationTypes, RequestorTypes requestorTypes, ValueTypes valueTypes) throws AttestationHubServerException{
@@ -50,14 +60,6 @@ public class ApplicationAttestationService {
 			throw new NoDataFoundException(409,"User Doesn't exist "+username);
 		}
 		
-		List<Application> applicationAttestations = applicationRepository.findByAttestationnameAndOwner(attestationName,username);
-		
-		/*
-		 * if(!CollectionUtils.isEmpty(applicationAttestations)) { throw new
-		 * SailPointServerException(
-		 * 409,"Application Attestation Data already Exist for user "+username); }
-		 */
-		
 		insertApplicationAttestationData(username, attestationName, rows, attribute, applicationTypes, requestorTypes, valueTypes);
 	}
 	
@@ -65,6 +67,8 @@ public class ApplicationAttestationService {
 	
 	private void insertApplicationAttestationData(String owner,String attestationName,Integer rows,Attribute attribute, ApplicationTypes applicationTypes, RequestorTypes requestorTypes,ValueTypes valueTypes) {
 		log.info("Saving Application attestations");
+		String attestationId = UUID.randomUUID().toString();
+		Long workItem = uniqueIdRepository.getNextSequenceValue();
 		for(int i=1;i<=rows;i++) {
 			Application application = new Application();
 			application.setApplication(applicationTypes.name());
@@ -74,7 +78,13 @@ public class ApplicationAttestationService {
 			application.setOwner(owner);
 			application.setRequester(requestorTypes.name());
 			application.setValue(valueTypes.name());
+			application.setAccessid(attestationId+"abc"+i);
 			application.setType("Application");
+			application.setDuedate(DateUtils.addDays(application.getCreated(), 30));
+			application.setDisplayname(application.getValue());
+			application.setWorkitem(""+workItem);
+			application.setAction("pending");
+			application.setDescription(application.getValue()+" Access for "+application.getApplication());
 			applicationRepository.save(application);
 		}
 		
@@ -83,10 +93,10 @@ public class ApplicationAttestationService {
 
 
 	@SuppressWarnings("all")
-	public SailpointResponse getApplicationAttestations(SailpointRequest sailpointRequest) throws AttestationHubServerException,NoDataFoundException,BadRequestException{
+	public SailpointResponse<ResponseAttributes<Application>> getApplicationAttestations(SailpointRequest sailpointRequest) throws AttestationHubServerException,NoDataFoundException,BadRequestException{
 		WorkflowArgs workFlowArgs = sailpointRequest.getWorkflowArgs();
 		if(workFlowArgs==null) throw new BadRequestException("Workflow Args are not passed.");
-		SailpointResponse sailpointResponse = new SailpointResponse();
+		SailpointResponse<ResponseAttributes<Application>> sailpointResponse = new SailpointResponse<ResponseAttributes<Application>>();
 		sailpointResponse.setRequestID(UUID.randomUUID().toString());
 		List<Application> entitlementsByOwner =  applicationRepository.findByowner(workFlowArgs.getOwner());
 		if(CollectionUtils.isEmpty(entitlementsByOwner)) {
@@ -106,13 +116,61 @@ public class ApplicationAttestationService {
 		sailpointResponse.setResponsetime(new Date().getTime());
 		return sailpointResponse;
 	}
+	
+	
+	@SuppressWarnings("all")
+	public SailpointResponse<SummaryResponseAttributes> getApplicationAttestationsSummary(SailpointRequest sailpointRequest,Integer limit) throws AttestationHubServerException,NoDataFoundException,BadRequestException{
+		WorkflowArgs workFlowArgs = sailpointRequest.getWorkflowArgs();
+		if(workFlowArgs==null) throw new BadRequestException("Workflow Args are not passed.");
+		SailpointResponse<SummaryResponseAttributes> sailpointResponse = new SailpointResponse<SummaryResponseAttributes>();
+		sailpointResponse.setRequestID(UUID.randomUUID().toString());
+		Map<String, Long> entitlementsByOwner =  getActionCountsByOwner(workFlowArgs.getOwner());
+		if(CollectionUtils.isEmpty(entitlementsByOwner)) {
+			sailpointResponse.setSuccess(Boolean.TRUE);
+			sailpointResponse.setRetry(Boolean.FALSE);
+			sailpointResponse.setRetryWait(1);
+			sailpointResponse.setStatus("No Data found for Owner"+workFlowArgs.getOwner());
+			sailpointResponse.setAttributes(new SummaryResponseAttributes(new SummaryResponseMap()));
+			return sailpointResponse;
+		}
+		List<String> attestationNames =  applicationRepository.findTopAttestationNamesByOwner(workFlowArgs.getOwner(), PageRequest.of(0, (limit ==null || limit <=0) ? 5:limit));
+		
+		SummaryResponseMap summaryMap = new SummaryResponseMap();
+		
+		summaryMap.setCompleted(Optional.ofNullable(entitlementsByOwner.get("completed")).orElse(0L).intValue());
+		summaryMap.setClosed(Optional.ofNullable(entitlementsByOwner.get("closed")).orElse(0L).intValue());
+		summaryMap.setPending(Optional.ofNullable(entitlementsByOwner.get("pending")).orElse(0L).intValue());
+		summaryMap.setList(attestationNames);
+
+		sailpointResponse.setAttributes(new SummaryResponseAttributes(summaryMap));
+		sailpointResponse.setSuccess(Boolean.TRUE);
+		sailpointResponse.setRetry(Boolean.FALSE);
+		sailpointResponse.setStatus("Success");
+		sailpointResponse.setFailure(Boolean.FALSE);
+		sailpointResponse.setRetryWait(0);
+		sailpointResponse.setResponsetime(new Date().getTime());
+		return sailpointResponse;
+	}
+	
+	public Map<String, Long> getActionCountsByOwner(String owner) {
+	    List<Object[]> results = applicationRepository.countByActionAndOwner(owner);
+
+	    Map<String, Long> resultMap = new LinkedHashMap<>();
+	    for (Object[] row : results) {
+	        String action = (String) row[0];
+	        Long count = ((Number) row[1]).longValue();
+	        resultMap.put(action, count);
+	    }
+
+	    return resultMap;
+	}
 
 
 
-	public SailpointResponse updateApplicationAttestations(SailpointRequest<Application> sailpointRequest) throws AttestationHubServerException,NoDataFoundException,BadRequestException{
+	public SailpointResponse<ResponseAttributes<Application>> updateApplicationAttestations(SailpointRequest<Application> sailpointRequest) throws AttestationHubServerException,NoDataFoundException,BadRequestException{
 		WorkflowArgs<Application> workFlowArgs = sailpointRequest.getWorkflowArgs();
 		if(workFlowArgs==null) throw new BadRequestException("Workflow Args are not passed.");
-		SailpointResponse sailpointResponse = new SailpointResponse();
+		SailpointResponse<ResponseAttributes<Application>> sailpointResponse = new SailpointResponse<ResponseAttributes<Application>>();
 		sailpointResponse.setRequestID(UUID.randomUUID().toString());
 		List<Application> items = workFlowArgs.getItemsList();
 		Map<Integer, Application> map = items.stream().collect(Collectors.toMap(Application::getId, Function.identity()));
@@ -122,6 +180,8 @@ public class ApplicationAttestationService {
 			Application input = map.get(app.getId());
 			app.setCompletioncomments(input.getCompletioncomments());
 			app.setSignoffstatus(input.getSignoffstatus());
+			
+			
 			if(StringUtils.hasText(input.getSignoffstatus()) && input.getSignoffstatus().equalsIgnoreCase("Completed")){
 				app.setSignoffdate(new Date());
 			}

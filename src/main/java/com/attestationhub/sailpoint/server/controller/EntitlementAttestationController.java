@@ -12,8 +12,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.attestationhub.sailpoint.server.dto.ResponseAttributes;
 import com.attestationhub.sailpoint.server.dto.SailpointRequest;
 import com.attestationhub.sailpoint.server.dto.SailpointResponse;
+import com.attestationhub.sailpoint.server.dto.SummaryResponseAttributes;
+import com.attestationhub.sailpoint.server.entity.Application;
 import com.attestationhub.sailpoint.server.entity.Entitlement;
 import com.attestationhub.sailpoint.server.service.EntitlementAttestationService;
 import com.attestationhub.sailpoint.server.utils.ApplicationTypes;
@@ -52,16 +55,25 @@ public class EntitlementAttestationController {
 	@PostMapping(value="/get",produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<?> getEntitlementsForUser(HttpServletRequest httpServletRequest,@RequestBody SailpointRequest<Entitlement> sailpointRequest) throws Exception{
 			log.info("Request received to get Entitlements for  {} ",sailpointRequest.getWorkflowArgs());
-			SailpointResponse response = entitlementAttestationService.getEntitlementAttestations(sailpointRequest);
+			SailpointResponse<ResponseAttributes<Entitlement>> response = entitlementAttestationService.getEntitlementAttestations(sailpointRequest);
+			if(response==null) return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No Data");
+			return ResponseEntity.status(HttpStatus.OK).body(response);
+	}
+	
+	@PostMapping(value="/get/summary",produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<?> getEntitlementsForSummaryForUser(HttpServletRequest httpServletRequest,@RequestBody SailpointRequest<Application> sailpointRequest,@RequestParam(required = false) Integer limit) throws Exception{
+			log.info("Request received to get Entitlements for  {} ",sailpointRequest.getWorkflowArgs());
+			SailpointResponse<SummaryResponseAttributes> response = entitlementAttestationService.getEntitlementAttestationsSummary(sailpointRequest,limit);
 			if(response==null) return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No Data");
 			return ResponseEntity.status(HttpStatus.OK).body(response);
 	}
 	
 	
+	
 	@PostMapping(value="/update",produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<?> updateApplicationForUser(HttpServletRequest httpServletRequest,@RequestBody SailpointRequest<Entitlement> sailpointRequest) throws Exception{
 			log.info("Request received to get Entitlements for  {} ",sailpointRequest.getWorkflowArgs());
-			SailpointResponse response = entitlementAttestationService.updateEntitlementAttestations(sailpointRequest);
+			SailpointResponse<ResponseAttributes<Entitlement>> response = entitlementAttestationService.updateEntitlementAttestations(sailpointRequest);
 			if(response==null) return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No Data");
 			return ResponseEntity.status(HttpStatus.OK).body(response);
 	}
@@ -69,7 +81,7 @@ public class EntitlementAttestationController {
 	
 	@PostMapping(value="/get/favorite",produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<?> saveFavorite(HttpServletRequest httpServletRequest,@RequestBody Entitlement entitlement,@RequestParam String owner) throws Exception{
-			SailpointResponse response = entitlementAttestationService.setFavorites(entitlement,owner);
+			SailpointResponse<ResponseAttributes<Entitlement>> response = entitlementAttestationService.setFavorites(entitlement,owner);
 			if(response==null) return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No Data");
 			return ResponseEntity.status(HttpStatus.OK).body(response);
 	}

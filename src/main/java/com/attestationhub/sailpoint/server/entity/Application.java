@@ -45,6 +45,9 @@ public class Application {
 	@Column(name = "owner")
 	private String owner;
 
+	@Column(name = "requester")
+	private String requester;
+
 	@Column(name = "application")
 	private String application;
 
@@ -57,8 +60,8 @@ public class Application {
 	@Column(name = "appValue")
 	private String value;
 
-	@Column(name = "displayName")
-	private String display_name;
+	@Column(name = "displayname")
+	private String displayname;
 
 	@Column(name = "signOffStatus")
 	private String signoffstatus;
@@ -69,9 +72,6 @@ public class Application {
 	@Column(name = "completionComments")
 	private String completioncomments;
 
-	@Column(name = "requester")
-	private String requester;
-
 	@EqualsAndHashCode.Exclude
 	@Column(name = "created")
 	@CreationTimestamp
@@ -79,9 +79,36 @@ public class Application {
 	private Date created;
 
 	@EqualsAndHashCode.Exclude
-	@Column(name = "signOffDate")
+	@Column(name = "signoffdate")
 	@CreationTimestamp
 	@JsonSerialize(using = DateSerializer.class)
 	private Date signoffdate;
-	
+
+	@EqualsAndHashCode.Exclude
+	@Column(name = "decisiondate")
+	@CreationTimestamp
+	@JsonSerialize(using = DateSerializer.class)
+	private Date decisiondate;
+
+	@EqualsAndHashCode.Exclude
+	@Column(name = "duedate")
+	@CreationTimestamp
+	@JsonSerialize(using = DateSerializer.class)
+	private Date duedate;
+
+	@Column(name = "description")
+	private String description;
+
+	@Column(name = "accessid")
+	private String accessid;
+
+	@Column(name = "modified")
+	private String modified;
+
+	@Column(name = "workitem")
+	private String workitem;
+
+	@Column(name = "businessappname")
+	private String businessappname;
+
 }

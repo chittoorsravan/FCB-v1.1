@@ -3,11 +3,9 @@ package com.attestationhub.sailpoint.server.dto;
 import lombok.Data;
 
 @Data
-public class SailpointResponse {
+public class SailpointResponse<T> {
 	
-	
-	@SuppressWarnings("rawtypes")
-	private ResponseAttributes attributes;
+	private T attributes;
 	
 	private Boolean complete;
 	

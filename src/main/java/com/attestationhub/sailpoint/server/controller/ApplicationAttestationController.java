@@ -12,8 +12,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.attestationhub.sailpoint.server.dto.ResponseAttributes;
 import com.attestationhub.sailpoint.server.dto.SailpointRequest;
 import com.attestationhub.sailpoint.server.dto.SailpointResponse;
+import com.attestationhub.sailpoint.server.dto.SummaryResponseAttributes;
 import com.attestationhub.sailpoint.server.entity.Application;
 import com.attestationhub.sailpoint.server.service.ApplicationAttestationService;
 import com.attestationhub.sailpoint.server.utils.ApplicationTypes;
@@ -52,7 +54,16 @@ public class ApplicationAttestationController {
 	@PostMapping(value="/get",produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<?> getApplicationsForUser(HttpServletRequest httpServletRequest,@RequestBody SailpointRequest<Application> sailpointRequest) throws Exception{
 			log.info("Request received to get Entitlements for  {} ",sailpointRequest.getWorkflowArgs());
-			SailpointResponse response = applicationAttestationService.getApplicationAttestations(sailpointRequest);
+			SailpointResponse<ResponseAttributes<Application>> response = applicationAttestationService.getApplicationAttestations(sailpointRequest);
+			if(response==null) return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No Data");
+			return ResponseEntity.status(HttpStatus.OK).body(response);
+	}
+	
+	
+	@PostMapping(value="/get/summary",produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<?> getApplicationsSummaryForUser(HttpServletRequest httpServletRequest,@RequestBody SailpointRequest<Application> sailpointRequest,@RequestParam(required = false) Integer limit) throws Exception{
+			log.info("Request received to get Entitlements for  {} ",sailpointRequest.getWorkflowArgs());
+			SailpointResponse<SummaryResponseAttributes> response = applicationAttestationService.getApplicationAttestationsSummary(sailpointRequest,limit);
 			if(response==null) return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No Data");
 			return ResponseEntity.status(HttpStatus.OK).body(response);
 	}
@@ -61,7 +72,7 @@ public class ApplicationAttestationController {
 	@PostMapping(value="/update",produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<?> updateApplicationForUser(HttpServletRequest httpServletRequest,@RequestBody SailpointRequest<Application> sailpointRequest) throws Exception{
 			log.info("Request received to get Entitlements for  {} ",sailpointRequest);
-			SailpointResponse response = applicationAttestationService.updateApplicationAttestations(sailpointRequest);
+			SailpointResponse<ResponseAttributes<Application>> response = applicationAttestationService.updateApplicationAttestations(sailpointRequest);
 			if(response==null) return ResponseEntity.status(HttpStatus.NO_CONTENT).body("No Data");
 			return ResponseEntity.status(HttpStatus.OK).body(response);
 	}

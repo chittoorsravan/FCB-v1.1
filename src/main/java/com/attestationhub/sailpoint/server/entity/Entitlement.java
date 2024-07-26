@@ -12,8 +12,11 @@ import javax.persistence.Table;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.DynamicUpdate;
 
+import com.attestationhub.sailpoint.server.utils.BooleanToStringSerializer;
 import com.attestationhub.sailpoint.server.utils.DateSerializer;
 import com.attestationhub.sailpoint.server.utils.ForceStringSerializer;
+import com.attestationhub.sailpoint.server.utils.StringToBooleanDeserializer;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import lombok.AllArgsConstructor;
@@ -32,41 +35,40 @@ import lombok.NoArgsConstructor;
 @DynamicUpdate
 public class Entitlement {
 	
-	
 	@Id
 	@GeneratedValue(strategy = GenerationType.AUTO)
 	@Column(name = "ID", unique = true, nullable = false)
 	@JsonSerialize(using = ForceStringSerializer.class)
 	private Integer id;
-
+	
 	@Column(name = "attestationName")
 	private String attestationname;
 
 	@Column(name = "owner")
-	private String entowner;
+	private String owner;
 
 	@Column(name = "application")
 	private String application;
 
 	@Column(name = "type")
 	private String type;
+	
+	@Column(name = "appValue")
+	private String value;
 
 	@Column(name = "attribute")
 	private String attribute;
 
-	@Column(name = "appValue")
-	private String value;
+	@Column(name = "displayname",length = 500)
+	private String displayname;
 
-	@Column(name = "displayName",length = 500)
-	private String display_name;
-
-	@Column(name = "signOffStatus")
+	@Column(name = "signoffstatus")
 	private String signoffstatus;
 
 	@Column(name = "action")
 	private String action;
 
-	@Column(name = "completionComments")
+	@Column(name = "completioncomments")
 	private String completioncomments;
 
 	@Column(name = "requester")
@@ -79,36 +81,63 @@ public class Entitlement {
 	private Date created;
 	
 	@EqualsAndHashCode.Exclude
-	@Column(name = "signOffDate")
+	@Column(name = "signoffdate")
 	@CreationTimestamp
 	@JsonSerialize(using = DateSerializer.class)
 	private Date signoffdate;
-
-	@Column(name = "businessAppName")
+	
+	@EqualsAndHashCode.Exclude
+	@Column(name = "decisiondate")
+	@CreationTimestamp
+	@JsonSerialize(using = DateSerializer.class)
+	private Date decisiondate;
+	
+	@EqualsAndHashCode.Exclude
+	@Column(name = "duedate")
+	@CreationTimestamp
+	@JsonSerialize(using = DateSerializer.class)
+	private Date duedate;
+	
+	@Column(name = "businessappname")
     private String businessappname;
-    
-	@Column(name = "isPrivileged")
+	
+	@Column(name = "isprivileged")
+	@JsonDeserialize(using = StringToBooleanDeserializer.class)
+    @JsonSerialize(using = BooleanToStringSerializer.class)
     private Boolean isprivileged;
-    
-	@Column(name = "apmNumber")
-    private String apmnumber;
-    
-	@Column(name = "requestable")
-	private Integer requestable;
 	
-	@Column(name = "description", length = 500)
-	private String description;
-	
-	@Column(name = "isCertifiable")
+	@Column(name = "iscertifiable")
+	@JsonDeserialize(using = StringToBooleanDeserializer.class)
+    @JsonSerialize(using = BooleanToStringSerializer.class)
 	private Boolean iscertifiable;
 	
-	@Column(name = "_rrequired")
-	private Integer _rrequired;
+	@Column(name = "isrequestable")
+	@JsonDeserialize(using = StringToBooleanDeserializer.class)
+    @JsonSerialize(using = BooleanToStringSerializer.class)
+	private Boolean isrequestable;
 	
-	@Column(name = "isFavorite")
-	private Boolean isFavorite;
+	@Column(name = "issensitive")
+	@JsonDeserialize(using = StringToBooleanDeserializer.class)
+    @JsonSerialize(using = BooleanToStringSerializer.class)
+	private Boolean issensitive;
 	
+	@Column(name = "admAccessRequired")
+	@JsonDeserialize(using = StringToBooleanDeserializer.class)
+    @JsonSerialize(using = BooleanToStringSerializer.class)
+	private Boolean admAccessRequired;
 	
+	@Column(name = "accessid")
+    private String accessid;
 	
+	@Column(name = "appid")
+	private String appid;
 	
+	@Column(name = "modified")
+    private String modified;
+	
+	@Column(name = "workitem")
+    private String workitem;
+    
+	@Column(name = "description", length = 500)
+	private String description;
 }

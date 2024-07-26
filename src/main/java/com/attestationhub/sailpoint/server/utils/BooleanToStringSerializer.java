@@ -1,0 +1,14 @@
+package com.attestationhub.sailpoint.server.utils;
+
+import java.io.IOException;
+
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.SerializerProvider;
+
+public class BooleanToStringSerializer extends JsonSerializer<Boolean> {
+    @Override
+    public void serialize(Boolean value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+        gen.writeString(value != null && value ? "1" : "0");
+    }
+}
