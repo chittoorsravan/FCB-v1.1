@@ -80,19 +80,16 @@ public class Application {
 
 	@EqualsAndHashCode.Exclude
 	@Column(name = "signoffdate")
-	@CreationTimestamp
 	@JsonSerialize(using = DateSerializer.class)
 	private Date signoffdate;
 
 	@EqualsAndHashCode.Exclude
 	@Column(name = "decisiondate")
-	@CreationTimestamp
 	@JsonSerialize(using = DateSerializer.class)
 	private Date decisiondate;
 
 	@EqualsAndHashCode.Exclude
 	@Column(name = "duedate")
-	@CreationTimestamp
 	@JsonSerialize(using = DateSerializer.class)
 	private Date duedate;
 

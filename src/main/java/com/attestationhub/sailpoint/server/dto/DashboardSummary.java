@@ -1,6 +1,7 @@
 package com.attestationhub.sailpoint.server.dto;
 
 import java.util.List;
+import java.util.Map;
 
 import lombok.Data;
 
@@ -11,9 +12,9 @@ public class DashboardSummary {
 	
 	private Integer pending;
 	
-	private Integer autoclosed;
+	private Integer autoClosed;
 	
-	private List<String> list;
+	private List<Map<String, String>> top5items;
 	
 
 }
