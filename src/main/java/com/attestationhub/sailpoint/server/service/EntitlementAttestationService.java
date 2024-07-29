@@ -1,18 +1,17 @@
 package com.attestationhub.sailpoint.server.service;
 
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.time.DateUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -130,9 +129,8 @@ public class EntitlementAttestationService {
 		SailpointResponse<SummaryResponseAttributes> sailpointResponse = new SailpointResponse<SummaryResponseAttributes>();
 		sailpointResponse.setRequestID(UUID.randomUUID().toString());
 		
-		Map<String, Long> entitlementsByOwner =  getActionCountsByOwner(workFlowArgs.getOwner());
-		
-		if(CollectionUtils.isEmpty(entitlementsByOwner)) {
+		SummaryResponseMap summaryMap =  getActionCountsByOwner(workFlowArgs.getOwner());
+		if(summaryMap == null || CollectionUtils.isEmpty(summaryMap.getTop5items()) ) {
 			sailpointResponse.setSuccess(Boolean.TRUE);
 			sailpointResponse.setRetry(Boolean.FALSE);
 			sailpointResponse.setRetryWait(1);
@@ -141,15 +139,6 @@ public class EntitlementAttestationService {
 			return sailpointResponse;
 		}
 		
-		List<String> attestationNames =  entitlementRepository.findTopAttestationNamesByOwner(workFlowArgs.getOwner(), PageRequest.of(0, (limit ==null || limit <=0) ? 5:limit));
-		
-		SummaryResponseMap summaryMap = new SummaryResponseMap();
-		
-		summaryMap.setCompleted(Optional.ofNullable(entitlementsByOwner.get("completed")).orElse(0L).intValue());
-		summaryMap.setClosed(Optional.ofNullable(entitlementsByOwner.get("closed")).orElse(0L).intValue());
-		summaryMap.setPending(Optional.ofNullable(entitlementsByOwner.get("pending")).orElse(0L).intValue());
-		summaryMap.setList(attestationNames);
-
 		sailpointResponse.setAttributes(new SummaryResponseAttributes(summaryMap));
 		
 		sailpointResponse.setSuccess(Boolean.TRUE);
@@ -161,20 +150,27 @@ public class EntitlementAttestationService {
 		return sailpointResponse;
 	}
 	
-	
-	public Map<String, Long> getActionCountsByOwner(String owner) {
+	public SummaryResponseMap getActionCountsByOwner(String owner) {
 	    List<Object[]> results = entitlementRepository.countByActionAndOwner(owner);
-
-	    Map<String, Long> resultMap = new LinkedHashMap<>();
+	    SummaryResponseMap summaryMap = new SummaryResponseMap();
+	    List<Map<String,String>> list=new ArrayList<Map<String,String>>();
+	    Map<String, String> attestationNamesWithAction = new LinkedHashMap<String, String>();
+	    
 	    for (Object[] row : results) {
-	        String action = (String) row[0];
-	        Long count = ((Number) row[1]).longValue();
-	        resultMap.put(action, count);
+	    	String action = (String) row[0];
+	    	String attestationname = (String) row[2];
+	        if(StringUtils.hasText(action) ||  "pending".equalsIgnoreCase(action) ) summaryMap.setPending(summaryMap.getPending() +  ((Number) row[1]).intValue());
+	        if(StringUtils.hasText(action) ||  "pending".equalsIgnoreCase(action) ) summaryMap.setPending(summaryMap.getCompleted() +  ((Number) row[1]).intValue());
+	        if(StringUtils.hasText(action) ||  "closed".equalsIgnoreCase(action) ) summaryMap.setPending(summaryMap.getAutoClosed() +  ((Number) row[1]).intValue());
+	        if(StringUtils.hasText(attestationname) && !attestationNamesWithAction.containsKey(attestationname)) {
+	        	attestationNamesWithAction.put(attestationname, action);
+	        }
 	    }
-
-	    return resultMap;
+	    list.add(attestationNamesWithAction);
+	    summaryMap.setTop5items(list);
+	    return summaryMap;
 	}
-
+	
 	public SailpointResponse<ResponseAttributes<Entitlement>> updateEntitlementAttestations(SailpointRequest<Entitlement> sailpointRequest) throws AttestationHubServerException,NoDataFoundException,BadRequestException{
 		WorkflowArgs<Entitlement> workFlowArgs = sailpointRequest.getWorkflowArgs();
 		if(workFlowArgs==null) throw new BadRequestException("Workflow Args are not passed.");
