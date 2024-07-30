@@ -16,7 +16,7 @@ public interface ApplicationRepository extends CrudRepository<Application, Integ
 
 	List<Application> findByowner(String owner);
 	
-	@Query(value = "SELECT COALESCE(a.action, 'pending') AS action, COUNT(*) AS count,a.attestation_name " +
+	@Query(value = "SELECT  count(DISTINCT attestation_name) as count , COALESCE(a.sign_off_status, 'pending') AS action, a.attestation_name " +
             "FROM Application a " +
             "WHERE a.owner = :owner " +
             "GROUP BY COALESCE(a.action, 'pending'),a.attestation_name", nativeQuery = true)

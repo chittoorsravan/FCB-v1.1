@@ -12,7 +12,7 @@ public class DashboardSummary {
 	
 	private Integer pending;
 	
-	private Integer autoClosed;
+	private Integer autoclosed;
 	
 	private List<Map<String, String>> top5items;
 	

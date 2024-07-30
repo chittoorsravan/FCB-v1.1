@@ -12,7 +12,7 @@ public class SummaryResponseMap {
 	private int completed=0;
     private List<Map<String,String>> top5items=new ArrayList<Map<String,String>>();
     private int pending=0;
-    private int autoClosed=0;
+    private int autoclosed=0;
     
     @Override
     public String toString() {
@@ -20,7 +20,7 @@ public class SummaryResponseMap {
                 "completed=" + completed +
                 ", top5items=" + top5items +
                 ", pending=" + pending +
-                 ", autoClosed=" + autoClosed +
+                 ", autoclosed=" + autoclosed +
                 '}';
     }
 

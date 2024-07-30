@@ -157,11 +157,11 @@ public class EntitlementAttestationService {
 	    Map<String, String> attestationNamesWithAction = new LinkedHashMap<String, String>();
 	    
 	    for (Object[] row : results) {
-	    	String action = (String) row[0];
+	    	String action = (String) row[1];
 	    	String attestationname = (String) row[2];
-	        if(StringUtils.hasText(action) ||  "pending".equalsIgnoreCase(action) ) summaryMap.setPending(summaryMap.getPending() +  ((Number) row[1]).intValue());
-	        if(StringUtils.hasText(action) ||  "pending".equalsIgnoreCase(action) ) summaryMap.setPending(summaryMap.getCompleted() +  ((Number) row[1]).intValue());
-	        if(StringUtils.hasText(action) ||  "closed".equalsIgnoreCase(action) ) summaryMap.setPending(summaryMap.getAutoClosed() +  ((Number) row[1]).intValue());
+	        if(StringUtils.hasText(action) &&  "pending".equalsIgnoreCase(action) ) summaryMap.setPending(summaryMap.getPending() +  ((Number) row[0]).intValue());
+	        if(StringUtils.hasText(action) &&  "completed".equalsIgnoreCase(action) ) summaryMap.setCompleted(summaryMap.getCompleted() +  ((Number) row[0]).intValue());
+	        if(StringUtils.hasText(action) &&  "autoclosed".equalsIgnoreCase(action) ) summaryMap.setAutoclosed(summaryMap.getAutoclosed() +  ((Number) row[0]).intValue());
 	        if(StringUtils.hasText(attestationname) && !attestationNamesWithAction.containsKey(attestationname)) {
 	        	attestationNamesWithAction.put(attestationname, action);
 	        }
