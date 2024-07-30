@@ -19,7 +19,7 @@ public interface EntitlementRepository  extends CrudRepository<Entitlement, Inte
     @Query(value = "SELECT  count(DISTINCT attestation_name) as count , COALESCE(a.sign_off_status, 'pending') AS action, a.attestation_name " +
             "FROM Entitlement a " +
             "WHERE a.owner = :owner " +
-            "GROUP BY a.action,a.attestation_name", nativeQuery = true)
+            "GROUP BY COALESCE(a.sign_off_status, 'pending'),a.attestation_name", nativeQuery = true)
 	List<Object[]> countByActionAndOwner(@Param("owner") String owner);
     
 }
