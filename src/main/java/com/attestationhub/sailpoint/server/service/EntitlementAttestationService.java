@@ -90,7 +90,7 @@ public class EntitlementAttestationService {
 			application.setAction("pending");
 			application.setAccessid(attestationId+"abc"+i);
 			application.setWorkitem(""+workItem);
-			application.setDescription(application.getValue()+" Access for "+application.getApplication());
+			if(i%2==0)application.setDescription(application.getValue()+" Access for "+application.getApplication());
 			entitlementRepository.save(application);
 		}
 		
