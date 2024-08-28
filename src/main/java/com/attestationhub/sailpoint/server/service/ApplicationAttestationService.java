@@ -83,6 +83,11 @@ public class ApplicationAttestationService {
 			application.setDisplayname(application.getValue());
 			application.setWorkitem(""+workItem);
 			application.setAction("pending");
+			if(valueTypes.name().equalsIgnoreCase(ValueTypes.AUTOCLOSED.name())) {
+				application.setAction("Autoclosed");
+				application.setSignoffstatus("Autoclosed");
+				application.setSignoffdate(new Date());
+			}
 			application.setDescription(application.getValue()+" Access for "+application.getApplication());
 			applicationRepository.save(application);
 		}
@@ -154,7 +159,7 @@ public class ApplicationAttestationService {
 	    	String attestationname = (String) row[2];
 	        if(StringUtils.hasText(action) &&  "pending".equalsIgnoreCase(action) ) summaryMap.setPending(summaryMap.getPending() +  ((Number) row[0]).intValue());
 	        if(StringUtils.hasText(action) &&  "completed".equalsIgnoreCase(action) ) summaryMap.setCompleted(summaryMap.getCompleted() +  ((Number) row[0]).intValue());
-	        if(StringUtils.hasText(action) &&  "autoclosed".equalsIgnoreCase(action) ) summaryMap.setPending(summaryMap.getAutoclosed() +  ((Number) row[0]).intValue());
+	        if(StringUtils.hasText(action) &&  "autoclosed".equalsIgnoreCase(action) ) summaryMap.setAutoclosed(summaryMap.getAutoclosed() +  ((Number) row[0]).intValue());
 	        if(StringUtils.hasText(attestationname) && !attestationNamesWithAction.containsKey(attestationname)) {
 	        	attestationNamesWithAction.put(attestationname, action);
 	        }
@@ -186,6 +191,9 @@ public class ApplicationAttestationService {
 				app.setSignoffdate(new Date());
 			}
 			app.setAction(input.getAction());
+			if(StringUtils.hasText(workFlowArgs.getComments())){
+				app.setComments(workFlowArgs.getComments());
+			}
 			applicationRepository.save(app);
 		}
 		

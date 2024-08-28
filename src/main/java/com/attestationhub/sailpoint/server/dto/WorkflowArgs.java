@@ -18,4 +18,6 @@ public class WorkflowArgs<T> {
 	
 	private  Map<String,T> items;
 	
+	private String comments;
+	
 }

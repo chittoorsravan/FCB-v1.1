@@ -121,7 +121,7 @@ public class Entitlement {
 	@Column(name = "admAccessRequired")
 	@JsonDeserialize(using = StringToBooleanDeserializer.class)
     @JsonSerialize(using = BooleanToStringSerializer.class)
-	private Boolean admAccessRequired;
+	private Boolean admaccessrequired;
 	
 	@Column(name = "accessid")
     private String accessid;

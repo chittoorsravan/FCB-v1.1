@@ -83,14 +83,21 @@ public class EntitlementAttestationService {
 			application.setBusinessappname(applicationTypes.name());
 			application.setIsrequestable(Boolean.FALSE);
 			application.setIssensitive(Boolean.FALSE);
-			application.setAdmAccessRequired(Boolean.FALSE);
+			application.setAdmaccessrequired(Boolean.FALSE);
 			application.setDuedate(DateUtils.addDays(application.getCreated(), 30));
 			application.setDisplayname(application.getValue());
 			application.setAppid("APM00"+workItem);
-			application.setAction("pending");
 			application.setAccessid(attestationId+"abc"+i);
+			application.setAction("pending");
 			application.setWorkitem(""+workItem);
-			if(i%2==0)application.setDescription(application.getValue()+" Access for "+application.getApplication());
+			if(valueTypes.name().equalsIgnoreCase(ValueTypes.AUTOCLOSED.name())) {
+				application.setAction("Autoclosed");
+				application.setSignoffdate(new Date());
+				application.setSignoffstatus("Autoclosed");
+			}
+			if(i%2==0) {
+				application.setDescription(application.getValue()+" Access for "+application.getApplication());
+			}
 			entitlementRepository.save(application);
 		}
 		
@@ -191,7 +198,7 @@ public class EntitlementAttestationService {
 			app.setCompletioncomments(input.getCompletioncomments());
 			app.setSignoffstatus(input.getSignoffstatus());
 			app.setIssensitive(input.getIssensitive());
-			app.setAdmAccessRequired(input.getAdmAccessRequired());
+			app.setAdmaccessrequired(input.getAdmaccessrequired());
 
 			if(StringUtils.hasText(input.getSignoffstatus()) && input.getSignoffstatus().equalsIgnoreCase("Completed")){
 				app.setSignoffdate(new Date());

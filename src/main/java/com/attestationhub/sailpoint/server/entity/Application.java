@@ -39,7 +39,7 @@ public class Application {
 	@JsonSerialize(using = ForceStringSerializer.class)
 	private Integer id;
 
-	@Column(name = "attestationName")
+	@Column(name = "attestation_Name")
 	private String attestationname;
 
 	@Column(name = "owner")
@@ -57,19 +57,19 @@ public class Application {
 	@Column(name = "attribute")
 	private String attribute;
 
-	@Column(name = "appValue")
+	@Column(name = "APP_VALUE")
 	private String value;
 
 	@Column(name = "displayname")
 	private String displayname;
 
-	@Column(name = "signOffStatus")
+	@Column(name = "Sign_off_Status")
 	private String signoffstatus;
 
 	@Column(name = "action")
 	private String action;
 
-	@Column(name = "completionComments")
+	@Column(name = "completion_Comments")
 	private String completioncomments;
 
 	@EqualsAndHashCode.Exclude
@@ -107,5 +107,8 @@ public class Application {
 
 	@Column(name = "businessappname")
 	private String businessappname;
+	
+	@Column(name = "missingentitlementcomments")
+	private String comments;
 
 }
