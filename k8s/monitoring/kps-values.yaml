@@ -1,0 +1,10 @@
+grafana:
+  adminPassword: "ChangeMe123!"
+  service: { type: LoadBalancer }
+  persistence: { enabled: false }
+
+prometheus:
+  prometheusSpec:
+    retention: 24h
+    storageSpec: null
+  service: { type: LoadBalancer }
