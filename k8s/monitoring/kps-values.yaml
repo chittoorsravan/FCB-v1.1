@@ -1,25 +1,13 @@
 grafana:
-  adminPassword: "ChangeMe123!"   # consider using a secret instead (see below)
-  persistence:
-    enabled: false
+  adminPassword: "ChangeMe123!"
   service:
     type: LoadBalancer
+  persistence:
+    enabled: false
 
 prometheus:
   prometheusSpec:
     retention: 24h
-    storageSpec: {}               # <- empty = no PVC
+    storageSpec: null
   service:
     type: LoadBalancer
-
-alertmanager:
-  persistence:
-    enabled: false
-  service:
-    type: LoadBalancer
-
-# EKS tip: these are not exposed on EKS control plane; disabling avoids scrape noise
-kubeControllerManager:
-  enabled: false
-kubeScheduler:
-  enabled: false
