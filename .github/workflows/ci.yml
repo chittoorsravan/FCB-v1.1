@@ -11,10 +11,8 @@ env:
   IMAGE_TAG: ${{ github.sha }}
   K8S_NAMESPACE: attestationhub
   APP_DEPLOYMENT: attestationhubserver
-
-  # Toggle these if you hit "Too many pods"
-  ENABLE_PREFIX_DELEGATION: "true"     # raises per-node pod IP capacity (AWS VPC CNI)
-  TEMP_SCALE_DOWN_MONITORING: "true"   # temporarily scale monitoring to 0 during app rollout
+  ENABLE_PREFIX_DELEGATION: "true"
+  TEMP_SCALE_DOWN_MONITORING: "true"
 
 permissions:
   contents: read
@@ -24,22 +22,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "8"
           cache: maven
-
       - name: Prepare /data directory
         run: |
           sudo mkdir -p /data
           sudo chmod 777 /data
           mkdir -p target/h2data
-
       - name: Maven Build (skip tests for speed)
         run: mvn -B -ntp clean package -DskipTests
-
       - name: Maven Tests
         run: mvn -B -ntp test
         env:
@@ -50,19 +44,15 @@ jobs:
     needs: build-test
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@v0.2.2
-
       - name: Trivy FS Scan
         run: trivy fs --exit-code 0 --format json -o trivy-fs.json .
-
       - name: Install Gitleaks
         uses: zricethezav/gitleaks-action@v2
         with:
           args: detect --source . -v -f json -r gitleaks-report.json
         continue-on-error: true
-
       - uses: actions/upload-artifact@v4
         with:
           name: security-reports
@@ -75,26 +65,21 @@ jobs:
     needs: [ build-test, security-check ]
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
-
+          aws-region: ${{ env.AWS_REGION }}
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-
       - name: Ensure ECR repo exists
         run: |
           aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1 || \
           aws ecr create-repository --repository-name "$ECR_REPOSITORY"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Build & Push (SHA + latest)
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -110,36 +95,27 @@ jobs:
     needs: docker-build-push
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
-
+          aws-region: ${{ env.AWS_REGION }}
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
-
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
-
-      # OPTIONAL: increase pod IP capacity per node (helps "Too many pods")
       - name: Enable AWS VPC CNI Prefix Delegation (optional)
         if: env.ENABLE_PREFIX_DELEGATION == 'true'
         run: |
           set -euxo pipefail
           kubectl -n kube-system set env daemonset/aws-node ENABLE_PREFIX_DELEGATION=true WARM_PREFIX_TARGET=1
           kubectl -n kube-system rollout status ds/aws-node --timeout=5m
-
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-
       - name: Apply namespaces
         run: kubectl apply -f k8s/namespaces.yaml
-
-      # TEMP: free IPs by scaling monitoring down (restored later)
       - name: Temporarily scale down monitoring (optional)
         if: env.TEMP_SCALE_DOWN_MONITORING == 'true'
         run: |
@@ -150,37 +126,29 @@ jobs:
           kubectl -n monitoring get deploy,sts -o json > "$SNAP" || echo '{"items":[]}' > "$SNAP"
           kubectl -n monitoring scale deploy --all --replicas=0 || true
           kubectl -n monitoring scale sts --all --replicas=0 || true
-          # wait for non-daemonset pods to terminate (node-exporter stays up)
           if kubectl -n monitoring get pods --no-headers | grep -q .; then
             kubectl -n monitoring wait --for=delete pod -l 'app notin (prometheus-node-exporter)' --timeout=5m || true
           fi
-
-      # Pre-clean app pods to avoid leftovers holding IPs
       - name: Pre-clean app pods (scale to 0 & clear leftovers)
         run: |
           set -euxo pipefail
           kubectl -n ${K8S_NAMESPACE} scale deploy/${APP_DEPLOYMENT} --replicas=0 || true
           kubectl -n ${K8S_NAMESPACE} delete pod -l app=${APP_DEPLOYMENT} --ignore-not-found || true
-          # remove non-running leftovers
           kubectl -n ${K8S_NAMESPACE} get pods --no-headers | \
             awk '/Evicted|Error|ImagePullBackOff|CrashLoopBackOff/ {print $1}' | \
             xargs -r kubectl -n ${K8S_NAMESPACE} delete pod || true
-          # wait for app pods to be gone
           kubectl -n ${K8S_NAMESPACE} wait --for=delete pod -l app=${APP_DEPLOYMENT} --timeout=3m || true
-
-      # Give your app high scheduling priority (create once if missing)
       - name: Ensure PriorityClass for app (idempotent)
         run: |
           set -euxo pipefail
           if ! kubectl get priorityclass app-high >/dev/null 2>&1; then
             kubectl create priorityclass app-high \
               --value=100000 \
-              --description="High priority for AttestationHub app to preempt when IPs scarce" \
+              --description="High priority for AttestationHub app" \
               --dry-run=client -o yaml | kubectl apply -f -
           fi
           kubectl -n ${K8S_NAMESPACE} patch deploy/${APP_DEPLOYMENT} --type merge -p \
             '{"spec":{"template":{"spec":{"priorityClassName":"app-high"}}}}' || true
-
       - name: Patch image & apply manifests
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -191,26 +159,20 @@ jobs:
           sed -i -E "s|(^[[:space:]]*image:[[:space:]]*).*$|\1${IMAGE_URI}|g" k8s/app/deployment.yaml
           kubectl apply -f k8s/app/deployment.yaml
           kubectl apply -f k8s/app/service.yaml
-
       - name: Scale up app
         run: kubectl -n ${K8S_NAMESPACE} scale deploy/${APP_DEPLOYMENT} --replicas=1
-
       - name: Rollout app
         run: kubectl rollout status deployment/${APP_DEPLOYMENT} -n ${K8S_NAMESPACE} --timeout=8m
-
-      # Restore monitoring replicas after successful rollout
       - name: Restore monitoring scale (optional)
         if: env.TEMP_SCALE_DOWN_MONITORING == 'true' && success()
         run: |
           set -euxo pipefail
           SNAP=/tmp/monitoring-scale-snapshot.json
           if [ -f "$SNAP" ]; then
-            # Deployments
             jq -r '.items[] | select(.kind=="Deployment") | [.metadata.name, (.spec.replicas//1)] | @tsv' "$SNAP" | \
             while IFS=$'\t' read -r name replicas; do
               [ -n "$name" ] && kubectl -n monitoring scale deploy "$name" --replicas="${replicas:-1}" || true
             done
-            # StatefulSets
             jq -r '.items[] | select(.kind=="StatefulSet") | [.metadata.name, (.spec.replicas//1)] | @tsv' "$SNAP" | \
             while IFS=$'\t' read -r name replicas; do
               [ -n "$name" ] && kubectl -n monitoring scale sts "$name" --replicas="${replicas:-1}" || true
@@ -219,123 +181,90 @@ jobs:
             kubectl -n monitoring scale deploy --all --replicas=1 || true
             kubectl -n monitoring scale sts --all --replicas=1 || true
           fi
-
-      # Deep diagnostics on failure
       - name: On failure dump scheduling diagnostics
         if: ${{ failure() }}
         run: |
           set -euxo pipefail
           echo "=== Deployment describe ==="
           kubectl describe deploy/${APP_DEPLOYMENT} -n ${K8S_NAMESPACE} || true
-
           echo "=== Pods (wide) ==="
           kubectl get pods -n ${K8S_NAMESPACE} -o wide || true
-
           echo "=== Events (last 200) ==="
           kubectl get events -n ${K8S_NAMESPACE} --sort-by=.lastTimestamp | tail -n 200 || true
-
           echo "=== Node capacity & allocatable ==="
           N=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
           kubectl describe node "$N" | sed -n '1,200p' | grep -E "pods:|Capacity|Allocatable" -n || true
-
           echo "=== Pods on the node ==="
           kubectl get pods -A -o wide --field-selector spec.nodeName="$N" || true
-
           echo "=== aws-cni logs (recent) ==="
           kubectl -n kube-system logs ds/aws-node --tail=200 || true
-
       - name: Show App NLB DNS
         run: |
           echo "App Service (NLB) DNS:"
-          kubectl get svc attestationhubserver-svc -n ${K8S_NAMESPACE} \
-            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
+          kubectl get svc attestationhubserver-svc -n ${K8S_NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
           echo "Open: http://<above-host>/attestationhubserver/swagger-ui/index.html"
 
-  deploy-observability:     # <— FIXED: aligned to jobs level
+  deploy-observability:
     runs-on: ubuntu-latest
     needs: deploy-app
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
-
+          aws-region: ${{ env.AWS_REGION }}
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
-
       - name: Setup Helm
         uses: azure/setup-helm@v4
-
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
-
       - name: Add Helm repos
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
-
       - name: Ensure monitoring namespace exists
         run: |
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-
       - name: Heal stuck Helm release if pending
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y jq
-
-          # Cache status (may be non-zero if release doesn't exist yet)
           if helm status kps -n monitoring > /tmp/kps.status 2>&1; then
             true
           else
             cat /tmp/kps.status || true
           fi
-
-          # If status shows a pending state, recover
           if grep -qiE 'STATUS:\s+pending-(install|upgrade|rollback)' /tmp/kps.status 2>/dev/null; then
-            echo "Release 'kps' is in a pending state. Attempting automatic recovery..."
-
-            # Find the last successful (deployed/superseded) revision
-            LAST_OK=$(helm history kps -n monitoring --output json | \
-              jq -r '[.[] | select(.status|test("^(deployed|superseded)$"))][-1].revision // empty')
-
+            LAST_OK=$(helm history kps -n monitoring --output json | jq -r '[.[] | select(.status|test("^(deployed|superseded)$"))][-1].revision // empty')
             if [ -n "${LAST_OK}" ]; then
-              echo "Rolling back to last successful revision: ${LAST_OK}"
               helm rollback kps "${LAST_OK}" -n monitoring --wait --timeout 10m || true
             else
-              echo "No successful revision found. Uninstalling stuck release..."
               helm uninstall kps -n monitoring --wait || true
-              # Clean up any leftover failed hooks (safety)
               kubectl -n monitoring delete job -l app.kubernetes.io/instance=kps --ignore-not-found || true
             fi
           else
-            echo "Release 'kps' is not pending or does not exist yet. Proceeding."
+            echo "kps not pending; proceeding."
           fi
-
       - name: Install/Upgrade kube-prometheus-stack (no PVCs)
         env:
           GRAFANA_ADMIN_PW: ${{ secrets.GRAFANA_ADMIN_PW }}
         run: |
           set -euxo pipefail
-          # Helpful pre-status output (won't fail the job)
           helm status kps -n monitoring || true
-
           helm upgrade --install kps prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
             -f k8s/monitoring/kps-values.yaml \
             --set grafana.adminPassword="${GRAFANA_ADMIN_PW:-ChangeMe123!}" \
             --wait --timeout 20m --atomic
-
       - name: Install ephemeral Elasticsearch + Kibana + Fluent Bit (manifests)
         run: |
           kubectl apply -f k8s/logging/elasticsearch.yaml
           kubectl apply -f k8s/logging/kibana.yaml
           kubectl apply -f k8s/logging/fluent-bit.yaml
-
       - name: Show Observability LBs
         run: |
           echo "Grafana:"
@@ -345,26 +274,13 @@ jobs:
           echo "Kibana:"
           kubectl get svc kibana -n logging -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
           echo "Grafana login: admin / (your secret)"
-
-      # --- Deep logs if anything fails above ---
       - name: On failure: dump Helm & operator diagnostics
         if: ${{ failure() }}
         run: |
           set -euxo pipefail
-          echo "=== Helm status ==="
           helm status kps -n monitoring || true
-
-          echo "=== Helm history (JSON) ==="
           helm history kps -n monitoring --output json || true
-
-          echo "=== Release secrets/configmaps ==="
           kubectl -n monitoring get secret,configmap -l owner=helm,name=kps -o wide || true
-
-          echo "=== KPS pods (by instance label) ==="
           kubectl get pods -n monitoring -l app.kubernetes.io/instance=kps -o wide || true
-
-          echo "=== KPS operator logs ==="
           kubectl -n monitoring logs deploy/kps-kube-prometheus-stack-operator --tail=300 || true
-
-          echo "=== Recent namespace events ==="
           kubectl get events -n monitoring --sort-by=.lastTimestamp | tail -n 300 || true
