@@ -251,7 +251,7 @@ jobs:
             -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
           echo "Open: http://<above-host>/attestationhubserver/swagger-ui/index.html"
 
-  deploy-observability:
+    deploy-observability:
     runs-on: ubuntu-latest
     needs: deploy-app
     steps:
@@ -278,19 +278,57 @@ jobs:
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
 
-      - name: Install kube-prometheus-stack (no PVCs)
+      - name: Ensure monitoring namespace exists
+        run: |
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Heal stuck Helm release if pending
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+          # Cache status (may be non-zero if release doesn't exist yet)
+          if helm status kps -n monitoring > /tmp/kps.status 2>&1; then
+            true
+          else
+            cat /tmp/kps.status || true
+          fi
+
+          # If status shows a pending state, recover
+          if grep -qiE 'STATUS:\s+pending-(install|upgrade|rollback)' /tmp/kps.status 2>/dev/null; then
+            echo "Release 'kps' is in a pending state. Attempting automatic recovery..."
+
+            # Find the last successful (deployed/superseded) revision
+            LAST_OK=$(helm history kps -n monitoring --output json | \
+              jq -r '[.[] | select(.status|test("^(deployed|superseded)$"))][-1].revision // empty')
+
+            if [ -n "${LAST_OK}" ]; then
+              echo "Rolling back to last successful revision: ${LAST_OK}"
+              helm rollback kps "${LAST_OK}" -n monitoring --wait --timeout 10m || true
+            else
+              echo "No successful revision found. Uninstalling stuck release..."
+              helm uninstall kps -n monitoring --wait || true
+              # Clean up any leftover failed hooks (safety)
+              kubectl -n monitoring delete job -l app.kubernetes.io/instance=kps --ignore-not-found || true
+            fi
+          else
+            echo "Release 'kps' is not pending or does not exist yet. Proceeding."
+          fi
+
+      - name: Install/Upgrade kube-prometheus-stack (no PVCs)
         env:
           GRAFANA_ADMIN_PW: ${{ secrets.GRAFANA_ADMIN_PW }}
         run: |
           set -euxo pipefail
-          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-          # optional status to avoid "another operation in progress" confusion
+          # Helpful pre-status output (won't fail the job)
           helm status kps -n monitoring || true
+
           helm upgrade --install kps prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
             -f k8s/monitoring/kps-values.yaml \
             --set grafana.adminPassword="${GRAFANA_ADMIN_PW:-ChangeMe123!}" \
-            --wait --timeout 15m --atomic
+            --wait --timeout 20m --atomic
 
       - name: Install ephemeral Elasticsearch + Kibana + Fluent Bit (manifests)
         run: |
@@ -307,3 +345,26 @@ jobs:
           echo "Kibana:"
           kubectl get svc kibana -n logging -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
           echo "Grafana login: admin / (your secret)"
+
+      # --- Deep logs if anything fails above ---
+      - name: On failure: dump Helm & operator diagnostics
+        if: ${{ failure() }}
+        run: |
+          set -euxo pipefail
+          echo "=== Helm status ==="
+          helm status kps -n monitoring || true
+
+          echo "=== Helm history (JSON) ==="
+          helm history kps -n monitoring --output json || true
+
+          echo "=== Release secrets/configmaps ==="
+          kubectl -n monitoring get secret,configmap -l owner=helm,name=kps -o wide || true
+
+          echo "=== KPS pods (by instance label) ==="
+          kubectl get pods -n monitoring -l app.kubernetes.io/instance=kps -o wide || true
+
+          echo "=== KPS operator logs ==="
+          kubectl -n monitoring logs deploy/kps-kube-prometheus-stack-operator --tail=300 || true
+
+          echo "=== Recent namespace events ==="
+          kubectl get events -n monitoring --sort-by=.lastTimestamp | tail -n 300 || true
