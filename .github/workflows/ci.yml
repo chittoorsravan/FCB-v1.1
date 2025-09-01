@@ -274,7 +274,7 @@ jobs:
           echo "Kibana:"
           kubectl get svc kibana -n logging -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
           echo "Grafana login: admin / (your secret)"
-      - name: On failure: dump Helm & operator diagnostics
+      - name: On failure dump Helm & operator diagnostics
         if: ${{ failure() }}
         run: |
           set -euxo pipefail
