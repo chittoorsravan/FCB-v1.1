@@ -26,7 +26,6 @@ jobs:
           java-version: "8"
           cache: maven
 
-      # Create writable dirs for local/H2 tests (safe for GH runners)
       - name: Prepare /data directory
         run: |
           sudo mkdir -p /data
@@ -46,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Trivy
-        uses: aquasecurity/setup-trivy@v0.2.2
+        uses: aquasecurity/setup-trivy@v0.2.3
 
       - name: Trivy FS Scan
         run: trivy fs --exit-code 0 --format json -o trivy-fs.json .
@@ -122,7 +121,6 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Cluster-wide prune to mitigate "Too many pods" scheduling errors
       - name: Prune old pods (Succeeded/Failed/Evicted) cluster-wide
         run: |
           set -euo pipefail
@@ -134,7 +132,6 @@ jobs:
           for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}'); do
             EV="$(kubectl get pods -n "$ns" | awk '$4=="Evicted"{print $1}')"
             if [ -n "$EV" ]; then
-              echo "Deleting evicted pods in namespace $ns: $EV"
               kubectl delete pod -n "$ns" $EV
             fi
           done
@@ -156,15 +153,9 @@ jobs:
       - name: On failure dump diagnostics
         if: ${{ failure() }}
         run: |
-          echo "=== Pods ==="
           kubectl get pods -n ${K8S_NAMESPACE} -o wide || true
-          echo "=== Events ==="
           kubectl get events -n ${K8S_NAMESPACE} --sort-by=.lastTimestamp | tail -n 200 || true
-          echo "=== Describe Deployment ==="
           kubectl describe deploy/${APP_DEPLOYMENT} -n ${K8S_NAMESPACE} || true
-          P=$(kubectl get pods -n ${K8S_NAMESPACE} -l app=${APP_DEPLOYMENT} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-          [ -n "$P" ] && kubectl describe pod "$P" -n ${K8S_NAMESPACE} || true
-          [ -n "$P" ] && kubectl logs "$P" -n ${K8S_NAMESPACE} --tail=200 || true
 
       - name: Show App NLB DNS
         run: |
@@ -200,7 +191,6 @@ jobs:
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
 
-      # In repeated runs, clean any leftover release/pods so they don't consume pod slots
       - name: Uninstall previous kube-prometheus-stack (if any)
         run: |
           helm -n monitoring uninstall kps || true
@@ -209,67 +199,13 @@ jobs:
 
       - name: Install kube-prometheus-stack (no PVCs)
         env:
-          GRAFANA_ADMIN_PW: ${{ secrets.GRAFANA_ADMIN_PW }} # define this in repo secrets
+          GRAFANA_ADMIN_PW: ${{ secrets.GRAFANA_ADMIN_PW }}
         run: |
           helm upgrade --install kps prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
             -f k8s/monitoring/kps-values.yaml \
             --set grafana.adminPassword="${GRAFANA_ADMIN_PW:-ChangeMe123!}" \
             --wait --timeout 15m --atomic
-
-      - name: Dump kube-prometheus-stack diagnostics
-        if: ${{ failure() }}
-        run: |
-          set -x
-          OUT=observability-debug
-          mkdir -p "$OUT"
-
-          echo "=== Helm status ===" | tee "$OUT/helm-status.txt"
-          helm -n monitoring status kps | tee -a "$OUT/helm-status.txt" || true
-          helm -n monitoring get all kps > "$OUT/helm-get-all.txt" 2>&1 || true
-
-          kubectl -n monitoring get pods -o wide > "$OUT/pods.txt" || true
-          kubectl -n monitoring get events --sort-by=.lastTimestamp > "$OUT/events.txt" || true
-          kubectl -n monitoring get deploy,sts,svc > "$OUT/workloads.txt" || true
-          kubectl -n monitoring get pvc > "$OUT/pvcs.txt" || true
-          kubectl get sc > "$OUT/storageclasses.txt" || true
-          kubectl get crd > "$OUT/crds.txt" || true
-          kubectl get apiservices > "$OUT/apiservices.txt" || true
-
-          for r in $(kubectl -n monitoring get deploy,sts -o name 2>/dev/null); do
-            kubectl -n monitoring describe "$r" > "$OUT/describe_${r//\//_}.txt" || true
-          done
-
-          OP=$(kubectl -n monitoring get pods -l app.kubernetes.io/name=kube-prometheus-stack-operator \
-               -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-          [ -n "$OP" ] && kubectl -n monitoring logs "$OP" --tail=1000 > "$OUT/logs_operator.txt" || true
-
-          PROM=$(kubectl -n monitoring get pods -l app.kubernetes.io/name=prometheus \
-                -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-          [ -n "$PROM" ] && kubectl -n monitoring logs "$PROM" --tail=1000 > "$OUT/logs_prometheus.txt" || true
-
-          GRAF=$(kubectl -n monitoring get pods -l app.kubernetes.io/name=grafana \
-                -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-          [ -n "$GRAF" ] && kubectl -n monitoring logs "$GRAF" --tail=1000 > "$OUT/logs_grafana.txt" || true
-
-          for p in $(kubectl -n monitoring get pods \
-              -o jsonpath='{range .items[?(@.status.containerStatuses[0].ready!=true)]}{.metadata.name}{"\n"}{end}'); do
-            kubectl -n monitoring describe pod "$p" > "$OUT/describe_pod_${p}.txt" || true
-            kubectl -n monitoring logs "$p" --all-containers --tail=1000 > "$OUT/logs_pod_${p}.txt" || true
-          done
-
-      - name: Upload observability diagnostics
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: observability-debug
-          path: observability-debug
-
-      - name: Install ephemeral Elasticsearch + Kibana + Fluent Bit (manifests)
-        run: |
-          kubectl apply -f k8s/logging/elasticsearch.yaml
-          kubectl apply -f k8s/logging/kibana.yaml
-          kubectl apply -f k8s/logging/fluent-bit.yaml
 
       - name: Show Observability LBs
         run: |
