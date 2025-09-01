@@ -5,23 +5,26 @@ metadata:
   namespace: attestationhub
 spec:
   replicas: 1
-  strategy: { type: Recreate }
+  strategy:
+    type: Recreate
   selector:
-    matchLabels: { app: attestationhubserver }
+    matchLabels:
+      app: attestationhubserver
   template:
     metadata:
-      labels: { app: attestationhubserver }
+      labels:
+        app: attestationhubserver
     spec:
-      tolerations:
-        - key: "CriticalAddonsOnly"
-          operator: "Exists"
-          effect: "NoSchedule"
+      # The workflow will insert: priorityClassName: app-high (if missing)
       containers:
         - name: attestationhubserver
-          image: 111111111111.dkr.ecr.us-east-1.amazonaws.com/fcb-attestationhub-server:latest
+          image: 211125412565.dkr.ecr.us-east-1.amazonaws.com/fcb-attestationhub-server:latest
           ports:
-            - name: http
-              containerPort: 9090
+            - containerPort: 9090
           resources:
-            requests: { cpu: "250m", memory: "512Mi" }
-            limits: { cpu: "1", memory: "1Gi" }
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
