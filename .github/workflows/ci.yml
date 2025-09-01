@@ -108,7 +108,7 @@ jobs:
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
 
-      - name: Install jq (for snapshot/restore)
+      - name: Install jq
         run: |
           sudo apt-get update -y
           sudo apt-get install -y jq
@@ -126,10 +126,10 @@ jobs:
           kubectl -n kube-system set env daemonset/aws-node ENABLE_PREFIX_DELEGATION=true WARM_PREFIX_TARGET=1
           kubectl -n kube-system rollout status ds/aws-node --timeout=5m
 
-      - name: Ensure PriorityClass app-high (create-only; no heredoc)
+      - name: Ensure PriorityClass app-high (create-only)
         run: |
           if ! kubectl get priorityclass app-high >/dev/null 2>&1; then
-            F=$(mktemp)
+            F="$(mktemp)"
             printf '%s\n' \
 'apiVersion: scheduling.k8s.io/v1' \
 'kind: PriorityClass' \
@@ -142,10 +142,10 @@ jobs:
             kubectl apply -f "$F"
           fi
 
-      - name: Ensure monitoring values (no PVCs) file exists (no heredoc)
+      - name: Ensure monitoring values (no PVCs)
         run: |
           mkdir -p k8s/monitoring
-          F=k8s/monitoring/kps-values.yaml
+          F="k8s/monitoring/kps-values.yaml"
           : > "$F"
           printf '%s\n' \
 'grafana:' \
@@ -162,17 +162,15 @@ jobs:
 '  service:' \
 '    type: LoadBalancer' \
 >> "$F"
-          echo "Wrote $F"
 
-      - name: Snapshot & scale down monitoring (free pod/IP capacity)
+      - name: Snapshot & scale down monitoring (optional)
         if: env.TEMP_SCALE_DOWN_MONITORING == 'true'
         run: |
-          SNAP=/tmp/monitoring-scale-snapshot.json
+          SNAP="/tmp/monitoring-scale-snapshot.json"
           kubectl -n monitoring get deploy,sts -o json > "$SNAP" || echo '{"items":[]}' > "$SNAP"
           kubectl -n monitoring scale deploy --all --replicas=0 || true
           kubectl -n monitoring scale sts --all --replicas=0 || true
-          # wait for non-daemonset pods to go away
-          kubectl -n monitoring get pods --no-headers || true
+          # Wait for non-daemonset pods to terminate (free IPs)
           kubectl -n monitoring wait --for=delete pod -l 'app notin (prometheus-node-exporter)' --timeout=5m || true
 
       - name: Heal Helm release if stuck (kps)
@@ -180,7 +178,7 @@ jobs:
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
           if helm status kps -n monitoring >/dev/null 2>&1; then
-            s=$(helm status kps -n monitoring -o json | jq -r '.info.status' || echo unknown)
+            s="$(helm status kps -n monitoring -o json | jq -r '.info.status' || echo unknown)"
             echo "kps status: $s"
             if echo "$s" | grep -Eiq 'pending|failed'; then
               kubectl -n monitoring get secret -o name | \
@@ -188,7 +186,7 @@ jobs:
                 xargs -r kubectl -n monitoring delete
             fi
           else
-            echo "kps not installed yet; ok"
+            echo "kps not installed yet; OK"
           fi
 
       - name: Install/Upgrade kube-prometheus-stack (no PVCs)
@@ -200,25 +198,24 @@ jobs:
             --set grafana.adminPassword="ChangeMe123!" \
             --wait --timeout 15m --atomic
 
-      - name: Scale app to 0 & clear leftovers (avoid “Too many pods”)
+      - name: Scale app to 0 & clear leftovers
         run: |
-          kubectl -n ${K8S_NAMESPACE} scale deploy/${APP_DEPLOYMENT} --replicas=0 || true
-          kubectl -n ${K8S_NAMESPACE} delete pod -l app=${APP_DEPLOYMENT} --ignore-not-found || true
-          # delete any non-running leftovers
-          for p in $(kubectl get pods -n ${K8S_NAMESPACE} \
+          kubectl -n "${K8S_NAMESPACE}" scale deploy/"${APP_DEPLOYMENT}" --replicas=0 || true
+          kubectl -n "${K8S_NAMESPACE}" delete pod -l app="${APP_DEPLOYMENT}" --ignore-not-found || true
+          for p in $(kubectl get pods -n "${K8S_NAMESPACE}" \
             --field-selector=status.phase!=Running \
             -o jsonpath='{.items[*].metadata.name}'); do
-            kubectl -n ${K8S_NAMESPACE} delete pod "$p" || true
+            kubectl -n "${K8S_NAMESPACE}" delete pod "$p" || true
           done
 
-      - name: Patch image & apply manifests (idempotent)
+      - name: Patch image & apply manifests
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
           echo "Deploying image: ${IMAGE_URI}"
           sed -i -E "s|(^[[:space:]]*image:[[:space:]]*).*$|\1${IMAGE_URI}|g" k8s/app/deployment.yaml
-          # ensure priorityClassName in deployment if not present (simple insert)
+          # Ensure priorityClassName present (simple insert)
           if ! grep -q 'priorityClassName:' k8s/app/deployment.yaml; then
             awk '
               {print}
@@ -231,21 +228,21 @@ jobs:
 
       - name: Scale app up and wait for rollout
         run: |
-          kubectl -n ${K8S_NAMESPACE} scale deploy/${APP_DEPLOYMENT} --replicas=1
-          kubectl rollout status deployment/${APP_DEPLOYMENT} -n ${K8S_NAMESPACE} --timeout=8m
+          kubectl -n "${K8S_NAMESPACE}" scale deploy/"${APP_DEPLOYMENT}" --replicas=1
+          kubectl rollout status deployment/"${APP_DEPLOYMENT}" -n "${K8S_NAMESPACE}" --timeout=8m
 
-      - name: Restore monitoring replicas
+      - name: Restore monitoring replicas (optional)
         if: env.TEMP_SCALE_DOWN_MONITORING == 'true'
         run: |
-          SNAP=/tmp/monitoring-scale-snapshot.json
-          if [[ -f "$SNAP" ]]; then
+          SNAP="/tmp/monitoring-scale-snapshot.json"
+          if [ -f "$SNAP" ]; then
             jq -r '.items[] | select(.kind=="Deployment") | [.metadata.name, (.spec.replicas//1)] | @tsv' "$SNAP" | \
             while IFS=$'\t' read -r n r; do
-              [[ -n "$n" ]] && kubectl -n monitoring scale deploy "$n" --replicas="${r:-1}" || true
+              [ -n "$n" ] && kubectl -n monitoring scale deploy "$n" --replicas="${r:-1}" || true
             done
             jq -r '.items[] | select(.kind=="StatefulSet") | [.metadata.name, (.spec.replicas//1)] | @tsv' "$SNAP" | \
             while IFS=$'\t' read -r n r; do
-              [[ -n "$n" ]] && kubectl -n monitoring scale sts "$n" --replicas="${r:-1}" || true
+              [ -n "$n" ] && kubectl -n monitoring scale sts "$n" --replicas="${r:-1}" || true
             done
           else
             kubectl -n monitoring scale deploy --all --replicas=1 || true
@@ -255,7 +252,7 @@ jobs:
       - name: Show Endpoints
         run: |
           echo "App (NLB) DNS:"
-          kubectl get svc attestationhubserver-svc -n ${K8S_NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
+          kubectl get svc attestationhubserver-svc -n "${K8S_NAMESPACE}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
           echo "Grafana:"
           kubectl get svc kps-grafana -n monitoring -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
           echo "Prometheus:"
@@ -265,13 +262,17 @@ jobs:
         if: ${{ failure() }}
         run: |
           echo "=== Pods (all) ==="; kubectl get pods -A -o wide || true
-          echo "=== App events ==="; kubectl get events -n ${K8S_NAMESPACE} --sort-by=.lastTimestamp | tail -n 200 || true
-          echo "=== App deploy ==="; kubectl describe deploy/${APP_DEPLOYMENT} -n ${K8S_NAMESPACE} || true
-          P=$(kubectl get pods -n ${K8S_NAMESPACE} -l app=${APP_DEPLOYMENT} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-          [ -n "$P" ] && kubectl describe pod "$P" -n ${K8S_NAMESPACE} || true
-          [ -n "$P" ] && kubectl logs "$P" -n ${K8S_NAMESPACE} --tail=200 || true
+          echo "=== App events ==="; kubectl get events -n "${K8S_NAMESPACE}" --sort-by=.lastTimestamp | tail -n 200 || true
+          echo "=== App deploy ==="; kubectl describe deploy/"${APP_DEPLOYMENT}" -n "${K8S_NAMESPACE}" || true
+          P="$(kubectl get pods -n "${K8S_NAMESPACE}" -l app="${APP_DEPLOYMENT}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+          if [ -n "$P" ]; then
+            kubectl describe pod "$P" -n "${K8S_NAMESPACE}" || true
+            kubectl logs "$P" -n "${K8S_NAMESPACE}" --tail=200 || true
+          fi
           echo "=== Node/pods ==="
-          N=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}' || true)
-          [ -n "$N" ] && kubectl describe node "$N" | sed -n '1,200p' | grep -nE 'pods:|Capacity|Allocatable' || true
-          [ -n "$N" ] && kubectl get pods -A -o wide --field-selector spec.nodeName="$N" || true
+          N="$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}' || true)"
+          if [ -n "$N" ]; then
+            kubectl describe node "$N" | sed -n '1,200p' | grep -nE 'pods:|Capacity|Allocatable' || true
+            kubectl get pods -A -o wide --field-selector spec.nodeName="$N" || true
+          fi
           echo "=== aws-cni logs ==="; kubectl -n kube-system logs ds/aws-node --tail=200 || true
