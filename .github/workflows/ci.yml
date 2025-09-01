@@ -20,23 +20,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "8"
           cache: maven
 
-      # Create local folders and perms (as you requested)
+      # local folders + perms you requested
       - name: Prepare /data directory
         run: |
+          set -eux
           sudo mkdir -p /data
           sudo chmod 777 /data
           mkdir -p target/h2data
 
       - name: Maven Build (skip tests for speed)
         run: mvn -B -ntp clean package -DskipTests
-
       - name: Maven Tests
         run: mvn -B -ntp test
 
@@ -45,19 +44,15 @@ jobs:
     needs: build-test
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@v0.2.2
-
       - name: Trivy FS Scan
         run: trivy fs --exit-code 0 --format json -o trivy-fs.json .
-
       - name: Install Gitleaks
         uses: zricethezav/gitleaks-action@v2
         with:
           args: detect --source . -v -f json -r gitleaks-report.json
         continue-on-error: true
-
       - uses: actions/upload-artifact@v4
         with:
           name: security-reports
@@ -70,30 +65,27 @@ jobs:
     needs: [ build-test, security-check ]
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
-
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-
       - name: Ensure ECR repo exists
         run: |
+          set -eux
           aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1 || \
           aws ecr create-repository --repository-name "$ECR_REPOSITORY"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Build & Push (SHA + latest)
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
+          set -eux
           IMAGE_BASE="${REGISTRY}/${ECR_REPOSITORY}"
           docker buildx build --platform linux/amd64 \
             -t "${IMAGE_BASE}:${IMAGE_TAG}" \
@@ -105,20 +97,18 @@ jobs:
     needs: docker-build-push
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
-
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
-
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
 
+      # Increase pod/IP capacity per node
       - name: Bump IP capacity on node (AWS CNI prefix delegation)
         run: |
           set -euxo pipefail
@@ -132,12 +122,13 @@ jobs:
       - name: Apply namespaces
         run: kubectl apply -f k8s/namespaces.yaml
 
-      # Ensure PriorityClass exists, but never mutate it to avoid "value: Forbidden"
+      # Safe PriorityClass creation without heredoc fragility
       - name: Ensure PriorityClass exists (no updates)
         run: |
           set -euo pipefail
           if ! kubectl get priorityclass app-high >/dev/null 2>&1; then
-            cat <<'EOF' | kubectl apply -f -
+            F=$(mktemp)
+            cat >"$F" <<'YAML'
             apiVersion: scheduling.k8s.io/v1
             kind: PriorityClass
             metadata:
@@ -145,18 +136,19 @@ jobs:
             value: 100000000
             globalDefault: false
             description: "High priority for attestationhub app"
-            EOF
+            YAML
+            # strip leading spaces to keep YAML valid even inside this script
+            sed -e 's/^[[:space:]]\{12\}//' "$F" | kubectl apply -f -
           else
             echo "PriorityClass app-high already exists; leaving as-is."
           fi
 
-      # Free up the node before applying the new Pod to avoid "Too many pods"
+      # Pre-clear app pods to avoid "Too many pods" on single-node cluster
       - name: Pre-clear app pods (scale down & delete leftovers)
         run: |
           set -euxo pipefail
           kubectl -n ${K8S_NAMESPACE} scale deploy/${APP_DEPLOYMENT} --replicas=0 || true
           kubectl -n ${K8S_NAMESPACE} delete pod -l app=${APP_DEPLOYMENT} --ignore-not-found
-          # Nuke obviously bad pods (Evicted, CrashLoop, etc.) if any remain
           kubectl -n ${K8S_NAMESPACE} get pods --no-headers | \
             awk '/Evicted|Error|ImagePullBackOff|CrashLoopBackOff/ {print $1}' | \
             xargs -r kubectl -n ${K8S_NAMESPACE} delete pod
@@ -168,18 +160,13 @@ jobs:
           set -euxo pipefail
           IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
           echo "Deploying image: $IMAGE_URI"
-          # Patch image in your checked-in manifest
           sed -i -E "s|(^[[:space:]]*image:[[:space:]]*).*$|\1${IMAGE_URI}|g" k8s/app/deployment.yaml
-
-          # Ensure deployment references the PriorityClass (merge patch)
+          # make sure deployment references the PriorityClass
           kubectl -n "${K8S_NAMESPACE}" patch deploy/${APP_DEPLOYMENT} --type merge -p '{
             "spec": { "template": { "spec": { "priorityClassName": "app-high" } } }
           }' || true
-
           kubectl apply -f k8s/app/deployment.yaml
           kubectl apply -f k8s/app/service.yaml
-
-          # Scale back up
           kubectl -n ${K8S_NAMESPACE} scale deploy/${APP_DEPLOYMENT} --replicas=1
           kubectl rollout status deployment/${APP_DEPLOYMENT} -n ${K8S_NAMESPACE} --timeout=8m
 
@@ -213,34 +200,33 @@ jobs:
     needs: deploy-app
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
-
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
-
       - name: Setup Helm
         uses: azure/setup-helm@v4
-
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
 
-      # Write a minimal, no-PVC values file inline
+      # Write values file safely (no heredoc pitfalls)
       - name: Write kps-values.yaml (no PVCs)
         run: |
+          set -eux
           mkdir -p k8s/monitoring
-          cat > k8s/monitoring/kps-values.yaml <<'YAML'
+          F=$(mktemp)
+          cat >"$F" <<'YAML'
           grafana:
             adminPassword: "ChangeMe123!"
             service:
               type: LoadBalancer
             persistence:
               enabled: false
+
           prometheus:
             prometheusSpec:
               retention: 24h
@@ -248,8 +234,10 @@ jobs:
             service:
               type: LoadBalancer
           YAML
+          sed -e 's/^[[:space:]]\{10\}//' "$F" > k8s/monitoring/kps-values.yaml
+          echo "Wrote k8s/monitoring/kps-values.yaml"
 
-      # Temporarily scale monitoring down to free pods/IPs (ignore node-exporter)
+      # Free IPs/pods before Helm
       - name: Temporarily scale monitoring down
         run: |
           set -euxo pipefail
@@ -258,60 +246,42 @@ jobs:
           kubectl -n monitoring get deploy,sts -o json > "$SNAP" || true
           kubectl -n monitoring scale deploy --all --replicas=0 || true
           kubectl -n monitoring scale sts --all --replicas=0 || true
-          # Wait for everything but node-exporter to disappear
           if kubectl -n monitoring get pods --no-headers >/dev/null 2>&1; then
             kubectl -n monitoring wait --for=delete pod \
               -l 'app notin (prometheus-node-exporter)' \
               --timeout=5m || true
           fi
 
-      # Heal stuck Helm release states, then install/upgrade with retry
+      # Heal stuck release (fixes "another operation is in progress")
       - name: Heal stuck Helm release (kps) if needed
         run: |
           set -euo pipefail
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-
           if helm -n monitoring status kps >/dev/null 2>&1; then
             STATUS=$(helm -n monitoring status kps -o json | jq -r '.info.status')
             echo "kps current status: ${STATUS}"
             if [[ "${STATUS}" == pending* ]]; then
-              echo "Release pending; attempting rollback…"
               LAST=$(helm -n monitoring history kps -o json | jq -r '[.[]|select(.status=="deployed")]|last|.revision // empty')
               if [[ -n "${LAST}" ]]; then
                 helm -n monitoring rollback kps "${LAST}" --wait --timeout 10m || true
               else
-                echo "No deployed revision; uninstalling and cleaning Helm records…"
                 helm -n monitoring uninstall kps || true
                 kubectl -n monitoring delete secret -l owner=helm,name=kps || true
                 kubectl -n monitoring delete configmap -l owner=helm,name=kps || true
               fi
             fi
           fi
-
-          # Clean stuck hook artifacts (best effort)
           kubectl -n monitoring delete job -l app=kube-prometheus-stack --ignore-not-found || true
           kubectl -n monitoring delete pod -l app=kube-prometheus-stack,owner=helm \
             --field-selector=status.phase!=Running --ignore-not-found || true
 
-          # Wait until release is not pending
-          for i in {1..30}; do
-            S=$(helm -n monitoring ls -o json | jq -r '.[]|select(.name=="kps")|.status // "none"')
-            [[ -z "$S" || "$S" == "deployed" || "$S" == "uninstalled" ]] && break
-            if [[ "$S" == pending* ]]; then
-              echo "kps still $S; waiting…"; sleep 10
-            else
-              break
-            fi
-          done
-
-      - name: Install/Upgrade kube-prometheus-stack (no PVCs, with retry)
+      - name: Install/Upgrade kube-prometheus-stack (no PVCs, retry)
         env:
           GRAFANA_ADMIN_PW: ${{ secrets.GRAFANA_ADMIN_PW }}
         run: |
           set -euxo pipefail
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
-
           ATTEMPTS=3
           for n in $(seq 1 $ATTEMPTS); do
             if helm upgrade --install kps prometheus-community/kube-prometheus-stack \
@@ -338,13 +308,11 @@ jobs:
               [[ -z "$name" ]] && continue
               kubectl -n monitoring scale deploy "$name" --replicas="${replicas}"
             done < <(jq -r '.items[] | select(.kind=="Deployment") | [.metadata.name, (.spec.replicas//1)] | @tsv' "$SNAP")
-
             while IFS=$'\t' read -r name replicas; do
               [[ -z "$name" ]] && continue
               kubectl -n monitoring scale sts "$name" --replicas="${replicas}"
             done < <(jq -r '.items[] | select(.kind=="StatefulSet") | [.metadata.name, (.spec.replicas//1)] | @tsv' "$SNAP")
           else
-            # Sensible defaults if no snapshot existed
             kubectl -n monitoring scale deploy kps-grafana --replicas=1 || true
             kubectl -n monitoring scale deploy kps-kube-prometheus-stack-operator --replicas=1 || true
             kubectl -n monitoring scale deploy kps-kube-state-metrics --replicas=1 || true
