@@ -2,7 +2,7 @@ name: FCB AttestationHub Server CI/CD
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   AWS_REGION: us-east-1
@@ -58,15 +58,15 @@ jobs:
 
   docker-build-push:
     runs-on: ubuntu-latest
-    needs: [ build-test, security-check ]
+    needs: [build-test, security-check]
     steps:
       - uses: actions/checkout@v4
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -94,9 +94,9 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
       - name: Update kubeconfig
@@ -104,10 +104,8 @@ jobs:
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-
       - name: Apply namespaces
         run: kubectl apply -f k8s/namespaces.yaml
-
       - name: Patch image & deploy app (Deployment + Service)
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -118,7 +116,6 @@ jobs:
           kubectl apply -f k8s/app/deployment.yaml
           kubectl apply -f k8s/app/service.yaml
           kubectl rollout status deployment/${APP_DEPLOYMENT} -n ${K8S_NAMESPACE} --timeout=8m
-
       - name: On failure dump diagnostics
         if: ${{ failure() }}
         run: |
@@ -131,7 +128,6 @@ jobs:
           P=$(kubectl get pods -n ${K8S_NAMESPACE} -l app=${APP_DEPLOYMENT} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           [ -n "$P" ] && kubectl describe pod "$P" -n ${K8S_NAMESPACE} || true
           [ -n "$P" ] && kubectl logs "$P" -n ${K8S_NAMESPACE} --tail=200 || true
-
       - name: Show App NLB DNS
         run: |
           echo "App Service (NLB) DNS:"
@@ -147,9 +143,9 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
       - name: Setup Helm
@@ -160,7 +156,6 @@ jobs:
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
-
       - name: Install kube-prometheus-stack (no PVCs)
         run: |
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
@@ -170,14 +165,61 @@ jobs:
             --namespace monitoring \
             -f k8s/monitoring/kps-values.yaml \
             --wait --timeout 15m --atomic
+      - name: Dump kube-prometheus-stack diagnostics
+        if: ${{ failure() }}
+        run: |
+          set -x
+          OUT=observability-debug
+          mkdir -p "$OUT"
 
+          echo "=== Helm status ===" | tee "$OUT/helm-status.txt"
+          helm -n monitoring status kps | tee -a "$OUT/helm-status.txt" || true
 
+          helm -n monitoring get all kps > "$OUT/helm-get-all.txt" 2>&1 || true
+
+          kubectl -n monitoring get pods -o wide > "$OUT/pods.txt" || true
+          kubectl -n monitoring get events --sort-by=.lastTimestamp > "$OUT/events.txt" || true
+          kubectl -n monitoring get deploy,sts,svc > "$OUT/workloads.txt" || true
+          kubectl -n monitoring get pvc > "$OUT/pvcs.txt" || true
+          kubectl get sc > "$OUT/storageclasses.txt" || true
+          kubectl get crd > "$OUT/crds.txt" || true
+          kubectl get apiservices > "$OUT/apiservices.txt" || true
+
+          # Describes
+          for r in $(kubectl -n monitoring get deploy,sts -o name 2>/dev/null); do
+            kubectl -n monitoring describe "$r" > "$OUT/describe_${r//\//_}.txt" || true
+          done
+
+          # Logs from important pods
+          OP=$(kubectl -n monitoring get pods -l app.kubernetes.io/name=kube-prometheus-stack-operator \
+               -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          [ -n "$OP" ] && kubectl -n monitoring logs "$OP" --tail=1000 > "$OUT/logs_operator.txt" || true
+
+          PROM=$(kubectl -n monitoring get pods -l app.kubernetes.io/name=prometheus \
+                -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          [ -n "$PROM" ] && kubectl -n monitoring logs "$PROM" --tail=1000 > "$OUT/logs_prometheus.txt" || true
+
+          GRAF=$(kubectl -n monitoring get pods -l app.kubernetes.io/name=grafana \
+                -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          [ -n "$GRAF" ] && kubectl -n monitoring logs "$GRAF" --tail=1000 > "$OUT/logs_grafana.txt" || true
+
+          # Any pod not Ready – capture describe + logs
+          for p in $(kubectl -n monitoring get pods \
+              -o jsonpath='{range .items[?(@.status.containerStatuses[0].ready!=true)]}{.metadata.name}{"\n"}{end}'); do
+            kubectl -n monitoring describe pod "$p" > "$OUT/describe_pod_${p}.txt" || true
+            kubectl -n monitoring logs "$p" --all-containers --tail=1000 > "$OUT/logs_pod_${p}.txt" || true
+          done
+      - name: Upload observability diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: observability-debug
+          path: observability-debug
       - name: Install ephemeral Elasticsearch + Kibana + Fluent Bit (manifests)
         run: |
           kubectl apply -f k8s/logging/elasticsearch.yaml
           kubectl apply -f k8s/logging/kibana.yaml
           kubectl apply -f k8s/logging/fluent-bit.yaml
-
       - name: Show Observability LBs
         run: |
           echo "Grafana:"
