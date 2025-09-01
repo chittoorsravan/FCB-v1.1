@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: kibana
   namespace: logging
+  labels:
+    app: kibana
 spec:
   replicas: 1
   selector: { matchLabels: { app: kibana } }
@@ -11,21 +13,23 @@ spec:
     spec:
       containers:
         - name: kibana
-          image: docker.elastic.co/kibana/kibana:8.14.3
+          image: docker.io/library/kibana:7.17.26
           env:
-            - { name: ELASTICSEARCH_HOSTS, value: "http://elasticsearch.logging.svc.cluster.local:9200" }
+            - name: ELASTICSEARCH_HOSTS
+              value: "http://elasticsearch.logging.svc.cluster.local:9200"
           ports:
-            - containerPort: 5601
+            - { containerPort: 5601, name: http }
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: kibana
   namespace: logging
-  annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
 spec:
   type: LoadBalancer
   selector: { app: kibana }
   ports:
-    - { name: http, port: 5601, targetPort: 5601 }
+    - { name: http, port: 80, targetPort: 5601 }
