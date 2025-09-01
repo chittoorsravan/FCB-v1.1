@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Trivy
-        uses: aquasecurity/setup-trivy@v0.2.2
+        uses: aquasecurity/setup-trive@v0.2.2
       - name: Trivy FS Scan
         run: trivy fs --exit-code 0 --format json -o trivy-fs.json .
       - name: Install Gitleaks
@@ -104,6 +104,14 @@ jobs:
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+      - name: Clean up old pods
+        run: |
+          kubectl delete pods --field-selector=status.phase==Succeeded -n ${K8S_NAMESPACE} --ignore-not-found
+          kubectl delete pods --field-selector=status.phase==Failed -n ${K8S_NAMESPACE} --ignore-not-found
+          kubectl delete pods --field-selector=status.phase==Unknown -n ${K8S_NAMESPACE} --ignore-not-found
+          # Clean up evicted pods
+          kubectl get pods -n ${K8S_NAMESPACE} | grep Evicted | awk '{print $1}' | xargs kubectl delete pod -n ${K8S_NAMESPACE} --ignore-not-found
+          sleep 10  # Wait for cleanup
       - name: Apply namespaces
         run: kubectl apply -f k8s/namespaces.yaml
       - name: Patch image & deploy app (Deployment + Service)
@@ -159,8 +167,6 @@ jobs:
       - name: Install kube-prometheus-stack (no PVCs)
         run: |
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-          helm repo update
           helm upgrade --install kps prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
             -f k8s/monitoring/kps-values.yaml \
