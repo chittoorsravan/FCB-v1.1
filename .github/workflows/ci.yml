@@ -265,15 +265,53 @@ jobs:
           kubectl apply -f k8s/logging/elasticsearch.yaml
           kubectl apply -f k8s/logging/kibana.yaml
           kubectl apply -f k8s/logging/fluent-bit.yaml
-      - name: Show Observability LBs
+
+      # ---------- REPLACED: robust outputs for LBs ----------
+      - name: Show Observability LBs (robust)
         run: |
+          set -euo pipefail
+
+          echo "=== All monitoring services (sanity) ==="
+          kubectl get svc -n monitoring -o wide || true
+          echo
+
           echo "Grafana:"
-          kubectl get svc kps-grafana -n monitoring -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
+          GRAFANA_HOST=$(kubectl -n monitoring get svc kps-grafana \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          echo "${GRAFANA_HOST:-<pending>}"
+          echo
+
           echo "Prometheus:"
-          kubectl get svc kps-kube-prometheus-prometheus -n monitoring -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
+          PROM_SVC=$(kubectl -n monitoring get svc \
+            -l app.kubernetes.io/instance=kps,app.kubernetes.io/name=prometheus \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | head -n1 || true)
+          if [ -n "${PROM_SVC:-}" ]; then
+            PROM_HOST=$(kubectl -n monitoring get svc "$PROM_SVC" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            echo "${PROM_HOST:-<pending>}"
+          else
+            echo "<service not found yet>"
+          fi
+          echo
+
           echo "Kibana:"
-          kubectl get svc kibana -n logging -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
+          KIBANA_HOST=$(kubectl -n logging get svc kibana \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          echo "${KIBANA_HOST:-<pending>}"
+          echo
+
           echo "Grafana login: admin / (your secret)"
+
+      - name: If Prometheus not ready, print diagnostics (non-fatal)
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          echo "=== Prometheus resources ==="
+          kubectl -n monitoring get prometheuses,svc,pods,sts 2>/dev/null || true
+          if kubectl -n monitoring get sts prometheus-kps-kube-prometheus-stack-prometheus >/dev/null 2>&1; then
+            kubectl -n monitoring rollout status sts/prometheus-kps-kube-prometheus-stack-prometheus --timeout=5m || true
+          fi
+
       - name: On failure dump Helm & operator diagnostics
         if: ${{ failure() }}
         run: |
