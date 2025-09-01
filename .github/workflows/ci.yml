@@ -25,13 +25,17 @@ jobs:
           distribution: temurin
           java-version: "8"
           cache: maven
+
+      # Create writable dirs for local/H2 tests (safe for GH runners)
       - name: Prepare /data directory
         run: |
           sudo mkdir -p /data
           sudo chmod 777 /data
           mkdir -p target/h2data
+
       - name: Maven Build (skip tests for speed)
         run: mvn -B -ntp clean package -DskipTests
+
       - name: Maven Tests
         run: mvn -B -ntp test
 
@@ -40,15 +44,19 @@ jobs:
     needs: build-test
     steps:
       - uses: actions/checkout@v4
+
       - name: Install Trivy
-        uses: aquasecurity/setup-trive@v0.2.2
+        uses: aquasecurity/setup-trivy@v0.2.2
+
       - name: Trivy FS Scan
         run: trivy fs --exit-code 0 --format json -o trivy-fs.json .
+
       - name: Install Gitleaks
         uses: zricethezav/gitleaks-action@v2
         with:
           args: detect --source . -v -f json -r gitleaks-report.json
         continue-on-error: true
+
       - uses: actions/upload-artifact@v4
         with:
           name: security-reports
@@ -61,21 +69,26 @@ jobs:
     needs: [build-test, security-check]
     steps:
       - uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region:            ${{ env.AWS_REGION }}
+
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
       - name: Ensure ECR repo exists
         run: |
           aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1 || \
           aws ecr create-repository --repository-name "$ECR_REPOSITORY"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Build & Push (SHA + latest)
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -91,29 +104,44 @@ jobs:
     needs: docker-build-push
     steps:
       - uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region:            ${{ env.AWS_REGION }}
+
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
+
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Clean up old pods
+
+      # Cluster-wide prune to mitigate "Too many pods" scheduling errors
+      - name: Prune old pods (Succeeded/Failed/Evicted) cluster-wide
         run: |
-          kubectl delete pods --field-selector=status.phase==Succeeded -n ${K8S_NAMESPACE} --ignore-not-found
-          kubectl delete pods --field-selector=status.phase==Failed -n ${K8S_NAMESPACE} --ignore-not-found
-          kubectl delete pods --field-selector=status.phase==Unknown -n ${K8S_NAMESPACE} --ignore-not-found
-          # Clean up evicted pods
-          kubectl get pods -n ${K8S_NAMESPACE} | grep Evicted | awk '{print $1}' | xargs kubectl delete pod -n ${K8S_NAMESPACE} --ignore-not-found
-          sleep 10  # Wait for cleanup
+          set -euo pipefail
+          for phase in Succeeded Failed; do
+            kubectl get pods --all-namespaces \
+              --field-selector=status.phase==${phase} \
+              -o name | xargs -r kubectl delete
+          done
+          for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}'); do
+            EV="$(kubectl get pods -n "$ns" | awk '$4=="Evicted"{print $1}')"
+            if [ -n "$EV" ]; then
+              echo "Deleting evicted pods in namespace $ns: $EV"
+              kubectl delete pod -n "$ns" $EV
+            fi
+          done
+
       - name: Apply namespaces
         run: kubectl apply -f k8s/namespaces.yaml
+
       - name: Patch image & deploy app (Deployment + Service)
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -124,6 +152,7 @@ jobs:
           kubectl apply -f k8s/app/deployment.yaml
           kubectl apply -f k8s/app/service.yaml
           kubectl rollout status deployment/${APP_DEPLOYMENT} -n ${K8S_NAMESPACE} --timeout=8m
+
       - name: On failure dump diagnostics
         if: ${{ failure() }}
         run: |
@@ -136,6 +165,7 @@ jobs:
           P=$(kubectl get pods -n ${K8S_NAMESPACE} -l app=${APP_DEPLOYMENT} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           [ -n "$P" ] && kubectl describe pod "$P" -n ${K8S_NAMESPACE} || true
           [ -n "$P" ] && kubectl logs "$P" -n ${K8S_NAMESPACE} --tail=200 || true
+
       - name: Show App NLB DNS
         run: |
           echo "App Service (NLB) DNS:"
@@ -148,29 +178,45 @@ jobs:
     needs: deploy-app
     steps:
       - uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region:            ${{ env.AWS_REGION }}
+
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
+
       - name: Setup Helm
         uses: azure/setup-helm@v4
+
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
       - name: Add Helm repos
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
-      - name: Install kube-prometheus-stack (no PVCs)
+
+      # In repeated runs, clean any leftover release/pods so they don't consume pod slots
+      - name: Uninstall previous kube-prometheus-stack (if any)
         run: |
+          helm -n monitoring uninstall kps || true
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+          kubectl delete pods -n monitoring --all --force --grace-period=0 || true
+
+      - name: Install kube-prometheus-stack (no PVCs)
+        env:
+          GRAFANA_ADMIN_PW: ${{ secrets.GRAFANA_ADMIN_PW }} # define this in repo secrets
+        run: |
           helm upgrade --install kps prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
             -f k8s/monitoring/kps-values.yaml \
+            --set grafana.adminPassword="${GRAFANA_ADMIN_PW:-ChangeMe123!}" \
             --wait --timeout 15m --atomic
+
       - name: Dump kube-prometheus-stack diagnostics
         if: ${{ failure() }}
         run: |
@@ -180,7 +226,6 @@ jobs:
 
           echo "=== Helm status ===" | tee "$OUT/helm-status.txt"
           helm -n monitoring status kps | tee -a "$OUT/helm-status.txt" || true
-
           helm -n monitoring get all kps > "$OUT/helm-get-all.txt" 2>&1 || true
 
           kubectl -n monitoring get pods -o wide > "$OUT/pods.txt" || true
@@ -191,12 +236,10 @@ jobs:
           kubectl get crd > "$OUT/crds.txt" || true
           kubectl get apiservices > "$OUT/apiservices.txt" || true
 
-          # Describes
           for r in $(kubectl -n monitoring get deploy,sts -o name 2>/dev/null); do
             kubectl -n monitoring describe "$r" > "$OUT/describe_${r//\//_}.txt" || true
           done
 
-          # Logs from important pods
           OP=$(kubectl -n monitoring get pods -l app.kubernetes.io/name=kube-prometheus-stack-operator \
                -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           [ -n "$OP" ] && kubectl -n monitoring logs "$OP" --tail=1000 > "$OUT/logs_operator.txt" || true
@@ -209,23 +252,25 @@ jobs:
                 -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           [ -n "$GRAF" ] && kubectl -n monitoring logs "$GRAF" --tail=1000 > "$OUT/logs_grafana.txt" || true
 
-          # Any pod not Ready – capture describe + logs
           for p in $(kubectl -n monitoring get pods \
               -o jsonpath='{range .items[?(@.status.containerStatuses[0].ready!=true)]}{.metadata.name}{"\n"}{end}'); do
             kubectl -n monitoring describe pod "$p" > "$OUT/describe_pod_${p}.txt" || true
             kubectl -n monitoring logs "$p" --all-containers --tail=1000 > "$OUT/logs_pod_${p}.txt" || true
           done
+
       - name: Upload observability diagnostics
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
           name: observability-debug
           path: observability-debug
+
       - name: Install ephemeral Elasticsearch + Kibana + Fluent Bit (manifests)
         run: |
           kubectl apply -f k8s/logging/elasticsearch.yaml
           kubectl apply -f k8s/logging/kibana.yaml
           kubectl apply -f k8s/logging/fluent-bit.yaml
+
       - name: Show Observability LBs
         run: |
           echo "Grafana:"
@@ -234,4 +279,4 @@ jobs:
           kubectl get svc kps-kube-prometheus-prometheus -n monitoring -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
           echo "Kibana:"
           kubectl get svc kibana -n logging -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
-          echo "Grafana login: admin / ChangeMe123!"
+          echo "Grafana login: admin / ${GRAFANA_ADMIN_PW:-ChangeMe123!}"
