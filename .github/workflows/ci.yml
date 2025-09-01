@@ -164,8 +164,13 @@ jobs:
       - name: Install kube-prometheus-stack (no PVCs)
         run: |
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
           helm upgrade --install kps prometheus-community/kube-prometheus-stack \
-            --namespace monitoring -f k8s/monitoring/kps-values.yaml
+            --namespace monitoring \
+            -f k8s/monitoring/kps-values.yaml \
+            --wait --timeout 15m --atomic
+
 
       - name: Install ephemeral Elasticsearch + Kibana + Fluent Bit (manifests)
         run: |
