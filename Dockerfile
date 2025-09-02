@@ -1,4 +1,4 @@
-# Stage 1: Build
+# Atage 1: Build
 FROM maven:3.8.6-openjdk-8 AS build
 WORKDIR /app
 COPY pom.xml .
